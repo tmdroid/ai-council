@@ -228,6 +228,14 @@ body {
   background: var(--bg2);
   border: 1px solid var(--border);
 }
+.msg.message.from-human {
+  align-self: flex-end;
+  background: var(--bg3);
+  border-color: var(--accent);
+}
+.msg.message.from-human .role-tag {
+  background: var(--purple);
+}
 .msg .role-tag {
   display: inline-block;
   font-size: 11px;
@@ -661,9 +669,11 @@ function appendMessage(msg, container) {
 
   if (mtype === 'message') {
     const roleClass = `role-${role}`;
+    const isHuman = msg.agent_id === 'human';
     let content = escapeHtml(msg.content || '');
     // Highlight @mentions
     content = content.replace(/@(\S+)/g, '<span class="mention-highlight">@$1</span>');
+    div.className = `msg ${mtype}${isHuman ? ' from-human' : ''}`;
     div.innerHTML = `<span class="role-tag ${roleClass}">${role}</span>\n${content}`;
   } else if (mtype === 'task') {
     div.innerHTML = `📋 ${escapeHtml(msg.content)}`;
@@ -764,7 +774,7 @@ async function sendMessage() {
   input.value = '';
   autoResize(input);
   hideMentionDropdown();
-  // Send via Socket.IO
+  // Send via Socket.IO (server will broadcast back — don't append locally)
   if (socket && socket.connected) {
     socket.emit("post_message", { session_id: currentSessionId, content });
   } else {

@@ -480,11 +480,9 @@ def on_post_message(data):
         emit("error", {"error": "session_not_found"})
         return
     content = data.get("content", "")
+    # post_message() already broadcasts via _broadcast_event, no need to emit again
     msg, status = room.post_message(room.human_id, content, data.get("type", "message"))
-    if status == 200:
-        # Broadcast to all clients in the room (including sender)
-        socketio.emit("message", msg, room=sid)
-    else:
+    if status != 200:
         emit("error", msg)
 
 
