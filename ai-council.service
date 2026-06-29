@@ -1,0 +1,16 @@
+[Unit]
+Description=AI Council Server — multi-agent collaboration dashboard
+After=network-online.target wg-quick@wg0.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes
+WorkingDirectory=/home/hermes/ai-council
+ExecStart=/usr/bin/python3 /home/hermes/ai-council/council_server.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
