@@ -661,7 +661,8 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Council Server — unified bus + dashboard")
     parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="10.0.0.8",
+                        help="Host to bind to (default: 10.0.0.8 = VPN only, 127.0.0.1 = localhost only, 0.0.0.0 = all interfaces)")
     args = parser.parse_args()
     SERVER_PORT = args.port
 
