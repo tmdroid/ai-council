@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
 *.pyo
-.council/.council_data/
+.council/
+.council_data/
