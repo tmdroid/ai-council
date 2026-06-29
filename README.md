@@ -45,41 +45,42 @@ debate/vote/implement through iterative rounds.
 
 ```
 ai-council/
+├── AGENTS.md               # Guide for AI agents working on this codebase
+├── README.md               # Human-facing documentation
 ├── council.yaml            # Config: backends, roles, models, consensus
 ├── council_backends.py     # Extensible backend registry (CLI plugins)
-├── council_bus.py           # HTTP message bus + voting + prompt builder
-├── council_agent.py         # Config-driven agent harness (connects CLIs to bus)
-├── council_supervisor.py    # Dynamic team composition + session orchestration
-├── test_council.py          # Integration test (no external CLIs needed)
-├── README.md               # This file
+├── council_bus.py          # Bus core: message/voting/prompt builder/parser
+├── council_agent.py        # Config-driven agent harness (connects CLIs to server)
+├── council_supervisor.py   # Dynamic team composition + task analysis
+├── council_server.py       # Unified server: bus + dashboard API + SSE + persistence
+├── test_council.py          # Core integration test (bus, backends, composition)
+├── test_server.py           # Server integration test (API, SSE, persistence)
+├── dashboard/
+│   └── index.html          # Web UI: session list, live conversation, @mention, voting
 └── .gitignore
 ```
 
 ## Quick Start
 
-### Test the harness (no external tools needed)
+### Run tests (no external tools needed)
 
 ```bash
 cd ~/ai-council
-python3 test_council.py
+python3 test_council.py    # core tests
+python3 test_server.py      # server tests
 ```
 
-### Dry run — see what team the supervisor would compose
+### Start the dashboard
 
 ```bash
-python3 council_supervisor.py \
-    --task "Add dark mode toggle to settings screen" \
-    --workdir ~/my-repo \
-    --dry-run
+python3 council_server.py --port 8080
+# Open http://localhost:8080 in your browser
 ```
 
-### Run a real council session
+### Dry run — preview team composition
 
 ```bash
-python3 council_supervisor.py \
-    --task "Add dark mode toggle to settings" \
-    --workdir ~/my-repo \
-    --consensus majority
+python3 council_supervisor.py --task "your task" --workdir ~/repo --dry-run
 ```
 
 ## council.yaml Configuration
