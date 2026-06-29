@@ -656,22 +656,60 @@ class ThreadingHTTPServer(HTTPServer):
 # Main
 # =============================================================================
 
-def main():
+def detect_bind_host():
+    """Auto-detect the best host to bind to.
+    Prefers the WireGuard VPN IP (10.0.0.x) if the VPN is up,
+    otherwise falls back to 127.0.0.1 (localhost only).
+    Never binds to 0.0.0.0 unless explicitly requested.
+    """
+    import socket
+    # Check if the WireGuard interface is up by looking for a 10.0.0.x address
+    try:
+        hostname = socket.gethostname()
+        addrs = socket.getaddrinfo(hostname, None, socket.AF_INET)
+        for addr in addrs:
+            ip = addr[4][0]
+            if ip.startswith("10.0.0."):
+                return ip  # VPN address — accessible from VPN peers
+    except Exception:
+        pass
+
+    # Fallback: check common WireGuard IPs
+    for test_ip in ["10.0.0.8", "10.0.0.1"]:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.bind((test_ip, 0))
+            s.close()
+            return test_ip
+        except OSError:
+            continue
+
+    # No VPN — localhost only
+    return "127.0.0.1"
     global SERVER_PORT
     import argparse
     parser = argparse.ArgumentParser(description="Council Server — unified bus + dashboard")
     parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--host", default="10.0.0.8",
-                        help="Host to bind to (default: 10.0.0.8 = VPN only, 127.0.0.1 = localhost only, 0.0.0.0 = all interfaces)")
+    parser.add_argument("--host", default="auto",
+                        help="Host to bind to (default: auto — detects VPN IP, falls back to 127.0.0.1)")
     args = parser.parse_args()
     SERVER_PORT = args.port
 
+    if args.host == "auto":
+        bind_host = detect_bind_host()
+    else:
+        bind_host = args.host
+
     MANAGER.load_persisted(CONFIG_PATH)
 
-    server = ThreadingHTTPServer((args.host, args.port), CouncilServerHandler)
-    print(f"Council Server running on http://localhost:{args.port}")
-    print(f"  UI:  http://localhost:{args.port}/")
-    print(f"  API: http://localhost:{args.port}/api/sessions")
+    server = ThreadingHTTPServer((bind_host, args.port), CouncilServerHandler)
+    print(f"Council Server running on http://{bind_host}:{args.port}")
+    if bind_host == "127.0.0.1":
+        print("  (localhost only — not accessible from other machines)")
+    elif bind_host.startswith("10.0.0."):
+        print(f"  (VPN only — accessible from 10.0.0.0/24)")
+    print(f"  UI:  http://{bind_host}:{args.port}/")
+    print(f"  API: http://{bind_host}:{args.port}/api/sessions")
     print(f"  Data: {DATA_DIR}")
     print(f"  Loaded {len(MANAGER.sessions)} persisted sessions")
 
