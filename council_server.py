@@ -240,7 +240,7 @@ class SessionRoom:
     # --- Agent Management ---
 
     def start_agents(self, agents=None):
-        """Start agent processes. Agents join the room and begin polling."""
+        """Start agent processes. Returns immediately — spawning happens in a thread."""
         from council_supervisor import analyze_task, compose_team
         config = load_config(self.config_path)
         registry = BackendRegistry.from_config(config)
@@ -264,33 +264,40 @@ class SessionRoom:
                 "The supervisor has assembled this council. Review the task, discuss, "
                 "and agree on a plan before implementing.", "task")
 
-        # Spawn agent processes
-        agent_script = str(Path(__file__).parent / "council_agent.py")
-        for agent in self.agents:
-            # Join the agent to the room first (so they can post)
-            if agent["id"] not in self.members:
-                self.join(agent["id"], agent["role"], f"{agent['backend']}/{agent.get('model', 'default')}")
+        # Spawn agents in a background thread so we don't block the HTTP response
+        def _spawn():
+            agent_script = str(Path(__file__).parent / "council_agent.py")
+            for agent in self.agents:
+                if agent["id"] not in self.members:
+                    self.join(agent["id"], agent["role"], f"{agent['backend']}/{agent.get('model', 'default')}")
 
-            cmd = [
-                sys.executable, agent_script,
-                "--config", self.config_path,
-                "--bus", f"http://127.0.0.1:{SERVER_PORT}",
-                "--session", self.id,
-                "--role", agent["role"],
-                "--backend", agent["backend"],
-                "--agent-id", agent["id"],
-                "--workdir", self.workdir,
-            ]
-            if agent.get("model"):
-                cmd += ["--model", agent["model"]]
-            if agent.get("read_only"):
-                cmd += ["--read-only"]
+                cmd = [
+                    sys.executable, agent_script,
+                    "--config", self.config_path,
+                    "--bus", f"http://127.0.0.1:{SERVER_PORT}",
+                    "--session", self.id,
+                    "--role", agent["role"],
+                    "--backend", agent["backend"],
+                    "--agent-id", agent["id"],
+                    "--workdir", self.workdir,
+                ]
+                if agent.get("model"):
+                    cmd += ["--model", agent["model"]]
+                if agent.get("read_only"):
+                    cmd += ["--read-only"]
 
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            self.agent_procs.append(proc)
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.agent_procs.append(proc)
 
-        self.status = "running"
+            self.status = "running"
+            self.save_meta()
+            # Broadcast the state update
+            self._broadcast("state", self.get_state())
+
+        self.status = "running"  # set immediately so the UI updates
         self.save_meta()
+        spawn_thread = threading.Thread(target=_spawn, daemon=True)
+        spawn_thread.start()
 
     def stop_agents(self):
         for proc in self.agent_procs:

@@ -758,7 +758,24 @@ async function sendMessage() {
   input.value = '';
   autoResize(input);
   hideMentionDropdown();
-  await api('POST', `/api/sessions/${currentSessionId}/message`, { content });
+  try {
+    const result = await api('POST', `/api/sessions/${currentSessionId}/message`, { agent_id: 'human', content });
+    if (result.error) {
+      console.error('Message error:', result.error);
+      // Re-add the text back to input so user doesn't lose it
+      input.value = content;
+      autoResize(input);
+      return;
+    }
+    // Append message locally for immediate feedback
+    if (result.role) {
+      appendMessage(result);
+    }
+  } catch (e) {
+    console.error('Send failed:', e);
+    input.value = content;
+    autoResize(input);
+  }
 }
 
 function handleInputKey(e) {
