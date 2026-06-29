@@ -704,6 +704,9 @@ def detect_bind_host():
 
     # No private network found — localhost only
     return "127.0.0.1"
+
+
+def main():
     global SERVER_PORT
     import argparse
     parser = argparse.ArgumentParser(description="Council Server — unified bus + dashboard")
