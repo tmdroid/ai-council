@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=hermes
 WorkingDirectory=/home/hermes/ai-council
-ExecStart=/usr/bin/python3 /home/hermes/ai-council/council_server.py
+ExecStart=/home/hermes/ai-council/.venv/bin/python /home/hermes/ai-council/council_server.py
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1

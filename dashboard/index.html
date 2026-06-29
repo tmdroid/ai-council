@@ -529,9 +529,24 @@ body {
   </div>
 </div>
 
+<!-- Socket.IO client library -->
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script>
 let currentSessionId = null;
-let eventSource = null;
+let socket = null;
+
+// === Socket.IO ===
+
+function connectSocket() {
+  if (socket) return;
+  socket = io();
+  socket.on("connect", () => console.log("[ws] connected"));
+  socket.on("disconnect", () => console.log("[ws] disconnected"));
+  socket.on("state", (data) => { if (currentSessionId) renderSession(data); });
+  socket.on("message", (msg) => { appendMessage(msg); });
+  socket.on("vote", (data) => { renderVotes(); });
+  socket.on("error", (err) => { console.error("[ws] error:", err); });
+}
 
 // === API ===
 
@@ -571,28 +586,19 @@ async function loadSessions() {
 
 async function selectSession(id) {
   currentSessionId = id;
-  if (eventSource) eventSource.close();
-  loadSessions();
+  connectSocket();
 
+  // Leave previous session room
+  if (socket && socket.connected) {
+    socket.emit("leave_session", { session_id: id });
+  }
+
+  loadSessions();
   const data = await api('GET', `/api/sessions/${id}`);
   renderSession(data);
 
-  // Start SSE stream
-  eventSource = new EventSource(`/api/sessions/${id}/stream`);
-  eventSource.addEventListener('state', e => {
-    const data = JSON.parse(e.data);
-    renderSession(data);
-  });
-  eventSource.addEventListener('message', e => {
-    const msg = JSON.parse(e.data);
-    appendMessage(msg);
-    updateAgents(msg);
-  });
-  eventSource.addEventListener('vote', e => {
-    const msg = JSON.parse(e.data);
-    appendMessage(msg);
-    renderVotes();
-  });
+  // Join the session room via Socket.IO for real-time updates
+  socket.emit("join_session", { session_id: id });
 }
 
 // === Render Session ===
@@ -758,23 +764,15 @@ async function sendMessage() {
   input.value = '';
   autoResize(input);
   hideMentionDropdown();
-  try {
-    const result = await api('POST', `/api/sessions/${currentSessionId}/message`, { agent_id: 'human', content });
-    if (result.error) {
-      console.error('Message error:', result.error);
-      // Re-add the text back to input so user doesn't lose it
-      input.value = content;
-      autoResize(input);
-      return;
-    }
-    // Append message locally for immediate feedback
-    if (result.role) {
-      appendMessage(result);
-    }
-  } catch (e) {
-    console.error('Send failed:', e);
-    input.value = content;
-    autoResize(input);
+  // Send via Socket.IO
+  if (socket && socket.connected) {
+    socket.emit("post_message", { session_id: currentSessionId, content });
+  } else {
+    // Fallback to REST
+    try {
+      const result = await api('POST', `/api/sessions/${currentSessionId}/message`, { agent_id: 'human', content });
+      if (result.role) appendMessage(result);
+    } catch (e) { console.error('Send failed:', e); input.value = content; autoResize(input); }
   }
 }
 
@@ -904,18 +902,30 @@ function autoResize(el) {
 async function castVote(voteId, response) {
   if (!currentSessionId) return;
   const rationale = prompt(`Voting "${response}" — add rationale (optional):`) || '';
-  await api('POST', `/api/sessions/${currentSessionId}/vote/respond`, { vote_id: voteId, response, rationale });
+  if (socket && socket.connected) {
+    socket.emit("cast_vote", { session_id: currentSessionId, vote_id: voteId, response, rationale });
+  } else {
+    await api('POST', `/api/sessions/${currentSessionId}/vote/respond`, { agent_id: 'human', vote_id: voteId, response, rationale });
+  }
 }
 
 async function stopAgents() {
   if (!currentSessionId) return;
-  await api('POST', `/api/sessions/${currentSessionId}/stop`, {});
+  if (socket && socket.connected) {
+    socket.emit("stop_agents", { session_id: currentSessionId });
+  } else {
+    await api('POST', `/api/sessions/${currentSessionId}/stop`, {});
+  }
   selectSession(currentSessionId);
 }
 
 async function startAgents() {
   if (!currentSessionId) return;
-  await api('POST', `/api/sessions/${currentSessionId}/start`, {});
+  if (socket && socket.connected) {
+    socket.emit("start_agents", { session_id: currentSessionId });
+  } else {
+    await api('POST', `/api/sessions/${currentSessionId}/start`, {});
+  }
   selectSession(currentSessionId);
 }
 
