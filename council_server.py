@@ -240,6 +240,7 @@ class SessionRoom:
     # --- Agent Management ---
 
     def start_agents(self, agents=None):
+        """Start agent processes. Agents join the room and begin polling."""
         from council_supervisor import analyze_task, compose_team
         config = load_config(self.config_path)
         registry = BackendRegistry.from_config(config)
@@ -251,26 +252,30 @@ class SessionRoom:
             available = registry.list_available()
             self.agents = compose_team(analysis, config, registry, available)
 
-        # Join human as supervisor
-        self.join(self.human_id, "supervisor", "human")
+        # Ensure human is joined as supervisor
+        if self.human_id not in self.members:
+            self.join(self.human_id, "supervisor", "human")
 
-        # Post the task
-        self.post_message(self.human_id,
-            f"COUNCIL TASK: {self.task}\n\nWorking directory: {self.workdir}\n"
-            f"Consensus: {self.consensus}\n\n"
-            "The supervisor has assembled this council. Review the task, discuss, "
-            "and agree on a plan before implementing.", "task")
+        # Post the task announcement if not already posted
+        if not any(m.get("type") == "task" for m in self.messages):
+            self.post_message(self.human_id,
+                f"COUNCIL TASK: {self.task}\n\nWorking directory: {self.workdir}\n"
+                f"Consensus: {self.consensus}\n\n"
+                "The supervisor has assembled this council. Review the task, discuss, "
+                "and agree on a plan before implementing.", "task")
 
         # Spawn agent processes
         agent_script = str(Path(__file__).parent / "council_agent.py")
         for agent in self.agents:
             # Join the agent to the room first (so they can post)
-            self.join(agent["id"], agent["role"], f"{agent['backend']}/{agent.get('model', 'default')}")
+            if agent["id"] not in self.members:
+                self.join(agent["id"], agent["role"], f"{agent['backend']}/{agent.get('model', 'default')}")
 
             cmd = [
                 sys.executable, agent_script,
                 "--config", self.config_path,
-                "--bus", f"http://127.0.0.1:{SERVER_PORT}/api/sessions/{self.id}",
+                "--bus", f"http://127.0.0.1:{SERVER_PORT}",
+                "--session", self.id,
                 "--role", agent["role"],
                 "--backend", agent["backend"],
                 "--agent-id", agent["id"],
@@ -533,8 +538,17 @@ class CouncilServerHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "task required"}, 400)
                 return
             room = MANAGER.create(task, workdir, CONFIG_PATH, consensus)
-            auto_start = body.get("auto_start", True)
-            if auto_start:
+            # Join the human as supervisor but DON'T auto-start agents
+            # The human can chat with the supervisor first, then start agents
+            room.join(room.human_id, "supervisor", "human")
+            room.post_message(room.human_id,
+                f"COUNCIL TASK: {task}\n\nWorking directory: {workdir}\n"
+                f"Consensus: {consensus}\n\n"
+                "Session created. The supervisor will assess the task and "
+                "compose a team. Click 'Start Agents' when ready, or post "
+                "a message to discuss the approach first.", "task")
+            # Auto-start agents only if explicitly requested
+            if body.get("auto_start", False):
                 room.start_agents()
             self._send_json(room.get_state())
             return

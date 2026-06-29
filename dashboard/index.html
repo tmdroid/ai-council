@@ -517,8 +517,8 @@ body {
     <div class="field">
       <label>Auto-start agents</label>
       <select id="autoStartInput">
+        <option value="false" selected>No — I'll start them manually after reviewing the task</option>
         <option value="true">Yes — compose team and start immediately</option>
-        <option value="false">No — I'll start them manually</option>
       </select>
       <div class="hint">The supervisor will analyze the task and decide which agents to spawn (planner, coder, reviewer, etc.)</div>
     </div>
@@ -613,7 +613,7 @@ function renderSession(data) {
       </div>
       <div class="header-actions">
         ${data.status === 'running' ? '<button class="btn danger" onclick="stopAgents()">Stop Agents</button>' : ''}
-        ${data.status === 'stopped' ? '<button class="btn primary" onclick="startAgents()">Start Agents</button>' : ''}
+        ${data.status !== 'running' ? '<button class="btn primary" onclick="startAgents()">Start Agents</button>' : ''}
         <button class="btn danger" onclick="deleteSession()">Delete</button>
       </div>
     </div>

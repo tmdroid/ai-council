@@ -32,7 +32,8 @@ def main():
     parser = argparse.ArgumentParser(description="Council Agent — config-driven")
     parser.add_argument("--config", default=str(Path(__file__).parent / "council.yaml"),
                        help="Path to council.yaml config")
-    parser.add_argument("--bus", default="http://127.0.0.1:8747", help="Bus URL")
+    parser.add_argument("--bus", default="http://127.0.0.1:8747", help="Server URL")
+    parser.add_argument("--session", default=None, help="Session ID (for unified server mode)")
     parser.add_argument("--role", required=True, help="Agent role (from council.yaml roles)")
     parser.add_argument("--backend", default=None, help="CLI backend (overrides config default)")
     parser.add_argument("--model", default=None, help="Model ID for the backend (overrides config default)")
@@ -90,7 +91,12 @@ def main():
     max_turns = args.max_turns or 10
 
     agent_id = args.agent_id or f"{args.role}-{uuid.uuid4().hex[:6]}"
-    bus = BusClient(args.bus)
+
+    # Build the bus client — if session is provided, use the unified server API
+    if args.session:
+        bus = BusClient(f"{args.bus}/api/sessions/{args.session}")
+    else:
+        bus = BusClient(args.bus)
 
     # Join the council
     join_result = bus.join(agent_id, args.role, f"{backend_name}:{model_id}")

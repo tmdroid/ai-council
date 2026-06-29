@@ -286,8 +286,17 @@ class ThreadingHTTPServer(HTTPServer):
 # =============================================================================
 
 class BusClient:
+    """HTTP client for the council bus/server.
+
+    Works in two modes:
+    1. Standalone bus (council_bus.py): base_url points to the bus root
+    2. Unified server (council_server.py): base_url points to /api/sessions/<id>
+    """
+
     def __init__(self, base_url):
         self.base_url = base_url.rstrip("/")
+        # Detect mode: if URL contains /api/sessions/, we're in server mode
+        self._server_mode = "/api/sessions/" in self.base_url
 
     def _request(self, method, path, body=None, timeout=30):
         url = f"{self.base_url}{path}"
@@ -312,10 +321,22 @@ class BusClient:
         return self._request("POST", "/message", {"agent_id": agent_id, "content": content, "type": msg_type})
 
     def get_messages(self, since=0):
-        return self._request("GET", f"/messages?since={since}")
+        if self._server_mode:
+            # In server mode, GET the session state which includes messages
+            state = self._request("GET", "")
+            msgs = state.get("messages", [])
+            if since > 0:
+                msgs = [m for m in msgs if m.get("timestamp", 0) > since]
+            return {"messages": msgs, "count": len(msgs)}
+        else:
+            return self._request("GET", f"/messages?since={since}")
 
     def get_room(self):
-        return self._request("GET", "/room")
+        if self._server_mode:
+            # In server mode, GET the session state
+            return self._request("GET", "")
+        else:
+            return self._request("GET", "/room")
 
     def propose_vote(self, agent_id, proposal, options=None):
         return self._request("POST", "/vote/propose", {"agent_id": agent_id, "proposal": proposal, "options": options})
