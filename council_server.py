@@ -658,33 +658,51 @@ class ThreadingHTTPServer(HTTPServer):
 
 def detect_bind_host():
     """Auto-detect the best host to bind to.
-    Prefers the WireGuard VPN IP (10.0.0.x) if the VPN is up,
-    otherwise falls back to 127.0.0.1 (localhost only).
+    Scans all network interfaces for a private VPN address (10.x.x.x).
+    If found, binds to that so the dashboard is accessible from VPN peers.
+    Otherwise falls back to 127.0.0.1 (localhost only).
     Never binds to 0.0.0.0 unless explicitly requested.
     """
     import socket
-    # Check if the WireGuard interface is up by looking for a 10.0.0.x address
+
+    # Method 1: Check all local IP addresses via getaddrinfo
     try:
         hostname = socket.gethostname()
         addrs = socket.getaddrinfo(hostname, None, socket.AF_INET)
         for addr in addrs:
             ip = addr[4][0]
-            if ip.startswith("10.0.0."):
-                return ip  # VPN address — accessible from VPN peers
+            if ip.startswith("10."):
+                return ip
     except Exception:
         pass
 
-    # Fallback: check common WireGuard IPs
-    for test_ip in ["10.0.0.8", "10.0.0.1"]:
+    # Method 2: Use UDP socket trick to find the interface IP for a private route
+    # Connect to an address in the 10.x.x.x range — the kernel picks the right
+    # interface (wg0 if VPN is up). UDP connect doesn't send packets.
+    for test_target in ["10.0.0.1", "10.255.255.255", "172.16.0.1", "192.168.1.1"]:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.bind((test_ip, 0))
+            s.connect((test_target, 1))
+            ip = s.getsockname()[0]
             s.close()
-            return test_ip
-        except OSError:
-            continue
+            if ip.startswith("10.") or ip.startswith("172.16.") or ip.startswith("192.168."):
+                return ip
+        except Exception:
+            pass
 
-    # No VPN — localhost only
+    # Method 3: Read /proc/net/fib_trie on Linux for interface IPs
+    try:
+        with open("/proc/net/fib_trie") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("10.") and "." in line:
+                    ip = line.split()[0]
+                    if ip.count(".") == 3 and ip != "10.0.0.0":
+                        return ip
+    except Exception:
+        pass
+
+    # No private network found — localhost only
     return "127.0.0.1"
     global SERVER_PORT
     import argparse
