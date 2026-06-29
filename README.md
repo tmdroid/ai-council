@@ -6,6 +6,9 @@ review session. The supervisor dynamically composes a team based on task
 analysis, assigns backends and models from a YAML config, and agents
 debate/vote/implement through iterative rounds.
 
+A web dashboard lets you watch conversations in real-time, post messages,
+@mention specific agents, and vote on proposals — all from your browser.
+
 ## Architecture
 
 ```
@@ -23,30 +26,37 @@ debate/vote/implement through iterative rounds.
                  └─────────────┬──────────────┘
                                │
                  ┌─────────────▼──────────────┐
-                 │    Council Supervisor       │
-                 │  (analyzes task, composes   │
-                 │   team, starts bus, spawns  │
-                 │   agents, monitors)         │
-                 └─────────────┬──────────────┘
-                               │
-                 ┌─────────────▼──────────────┐
-                 │      Council Bus (HTTP)     │
-                 │  messages | voting | members│
-                 └──┬──────┬──────┬──────┬───┘
-                    │      │      │      │
-              ┌─────▼┐ ┌──▼───┐ ┌▼────┐ ┌▼─────┐
-              │agent1│ │agent2│ │agent3│ │agent4│
-              │(plan)│ │(code)│ │(rev) │ │(test)│
-              │claude│ │codex │ │ollama│ │claude│
-              └──────┘ └──────┘ └──────┘ └──────┘
+                 │    Council Server (council_server.py)   │
+                 │  ┌──────────────────────────────────┐   │
+                 │  │  Session "room" 1 (messages,     │   │
+                 │  │  votes, members, SSE, persistence)│   │
+                 │  ├──────────────────────────────────┤   │
+                 │  │  Session "room" 2                │   │
+                 │  ├──────────────────────────────────┤   │
+                 │  │  Session "room" N                │   │
+                 │  └──────────────────────────────────┘   │
+                 │  + REST API + static file serving       │
+                 └──┬──────────┬──────────┬───────────────┘
+                    │          │          │
+         ┌──────────▼┐  ┌───────▼───┐  ┌──▼────────┐
+         │ Browser   │  │ Agent 1   │  │ Agent 2   │
+         │ (human)   │  │ (coder)   │  │ (reviewer)│
+         │ SSE+HTTP  │  │ HTTP      │  │ HTTP      │
+         │ @mentions │  │ claude    │  │ codex     │
+         │ voting    │  │           │  │           │
+         └───────────┘  └───────────┘  └───────────┘
 ```
+
+The server IS the bus. There is no separate bus process. Every message flows
+through the server, which persists it, broadcasts to SSE listeners, and
+processes votes. The human and AI agents all connect to the same server.
 
 ## Files
 
 ```
 ai-council/
 ├── AGENTS.md               # Guide for AI agents working on this codebase
-├── README.md               # Human-facing documentation
+├── README.md               # Human-facing documentation (this file)
 ├── council.yaml            # Config: backends, roles, models, consensus
 ├── council_backends.py     # Extensible backend registry (CLI plugins)
 ├── council_bus.py          # Bus core: message/voting/prompt builder/parser
@@ -57,6 +67,7 @@ ai-council/
 ├── test_server.py           # Server integration test (API, SSE, persistence)
 ├── dashboard/
 │   └── index.html          # Web UI: session list, live conversation, @mention, voting
+├── ai-council.service       # systemd service file for persistent deployment
 └── .gitignore
 ```
 
@@ -74,14 +85,46 @@ python3 test_server.py      # server tests
 
 ```bash
 python3 council_server.py --port 8080
-# Open http://localhost:8080 in your browser
+# Open http://<detected-ip>:8080 in your browser
 ```
+
+The server auto-detects the bind host:
+- If a WireGuard VPN or private network (10.x.x.x) is available, binds to that
+- Otherwise falls back to 127.0.0.1 (localhost only)
+- Use `--host 0.0.0.0` to explicitly expose to all interfaces
+
+### Run as a persistent service
+
+```bash
+sudo cp ai-council.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable ai-council
+sudo systemctl start ai-council
+
+# Manage:
+sudo systemctl status ai-council
+sudo systemctl restart ai-council
+journalctl -u ai-council -f   # follow logs
+```
+
+Starts on boot, auto-restarts on failure, survives SSH disconnects.
 
 ### Dry run — preview team composition
 
 ```bash
 python3 council_supervisor.py --task "your task" --workdir ~/repo --dry-run
 ```
+
+## Dashboard Features
+
+- **Session list** — sidebar showing all past and running sessions with status indicators
+- **Live conversation** — messages stream in real-time via SSE, no page refresh
+- **@mention dropdown** — type @ to get a filtered list of agents in the room; navigate with arrow keys, select with Enter/Tab or mouse click
+- **Agent panel** — right sidebar showing all agents, their roles, backends, models, and online status
+- **Voting banners** — open votes appear inline with approve/reject/request_changes buttons
+- **Stop/start agents** — control agent processes from the UI
+- **Session persistence** — past sessions with full message history are viewable after server restart
+- **New session modal** — enter task, working directory, consensus rule, auto-start option
 
 ## council.yaml Configuration
 
@@ -189,21 +232,21 @@ The supervisor analyzes the task and decides:
 
 1. **Complexity** (simple/moderate/complex) based on keywords and role needs
 2. **Required roles** based on task type:
-   - Security keywords (auth, vulnerability, token) -> add security reviewer
-   - Architecture keywords (refactor, migrate, design) -> add architect
-   - Testing keywords (test, coverage, TDD) -> add tester
-   - Research keywords (explore, investigate) -> add researcher
-   - Large repo (>50 source files) -> add researcher
-   - Complex task -> add planner + second coder
+   - Security keywords (auth, vulnerability, token) → add security reviewer
+   - Architecture keywords (refactor, migrate, design) → add architect
+   - Testing keywords (test, coverage, TDD) → add tester
+   - Research keywords (explore, investigate) → add researcher
+   - Large repo (>50 source files) → add researcher
+   - Complex task → add planner + second coder
 3. **Backend assignment** — distributes across available backends so
    reviewer and coder use different models when possible
 
 ### Examples
 
 ```
-"Fix typo in README"                    -> 2 agents (coder + reviewer)
-"Add API endpoint with error handling"  -> 4 agents (coder, reviewer, planner, researcher)
-"Migrate auth to JWT + security review" -> 7 agents (security, architect, tester,
+"Fix typo in README"                    → 2 agents (coder + reviewer)
+"Add API endpoint with error handling"  → 4 agents (coder, reviewer, planner, researcher)
+"Migrate auth to JWT + security review" → 7 agents (security, architect, tester,
                                                  2x coder, reviewer, planner)
 ```
 
@@ -212,7 +255,7 @@ The supervisor analyzes the task and decides:
 Each agent CLI (Claude Code, Codex, Ollama) runs in its own process. The harness
 (`council_agent.py`) wraps it:
 
-1. **Poll**: The harness polls the bus for new messages and open votes
+1. **Poll**: The harness polls the server for new messages and open votes
 2. **Build prompt**: It constructs a prompt containing:
    - The agent's role description (from YAML)
    - The full conversation history (last 80 messages)
@@ -223,8 +266,15 @@ Each agent CLI (Claude Code, Codex, Ollama) runs in its own process. The harness
    - `VOTE: <vote_id> <option> -- <rationale>` — respond to a vote
    - `PROPOSE_VOTE: <proposal> | options: <opt1, opt2>` — call a new vote
    - `DONE: <summary>` — signal completion
-5. **Post**: It posts the message and any vote actions to the bus
+5. **Post**: It posts the message and any vote actions to the server
 6. **Loop**: Back to step 1
+
+The human interacts through the web dashboard:
+- Post messages to the council (visible to all agents)
+- @mention specific agents to direct questions or instructions
+- Vote on proposals (approve/reject/request_changes)
+- Stop agents when you want to give more context or change direction
+- Start agents when ready to resume
 
 ## Voting and Consensus
 
@@ -237,12 +287,22 @@ Each agent CLI (Claude Code, Codex, Ollama) runs in its own process. The harness
 If consensus is not reached, the vote status is `failed_no_consensus` and
 the council continues debating until a new vote is called.
 
+## Session Persistence
+
+- Session metadata saved to `.council_data/<id>.json`
+- Full message history saved to `.council_data/<id>_history.json`
+- On server restart, all past sessions are loaded automatically
+- Past conversations are viewable in the dashboard with full history
+- Sessions can be deleted from the dashboard (or by clearing .council_data/)
+
 ## Adding a New Backend
 
 1. Add it to `backends:` in council.yaml
 2. Set `enabled: true` when the CLI is installed
 3. The backend registry auto-detects availability via `shutil.which()`
 4. No code changes needed — the agent harness reads the config
+
+See AGENTS.md for detailed instructions.
 
 ## Requirements
 
@@ -252,3 +312,4 @@ the council continues debating until a new vote is called.
   - `npm install -g @openai/codex` + set OPENAI_API_KEY
   - `npm i -g opencode-ai@latest` + `opencode auth login`
 - The `shell` backend is always available as a fallback
+- For VPN-only access: WireGuard or any private network (10.x.x.x)

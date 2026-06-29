@@ -1,0 +1,31 @@
+{
+  "id": "7acd9411",
+  "task": "I need a deep review of the current project and its capabilities and functionalities",
+  "workdir": "/home/hermes/imnuri-azsmr",
+  "consensus": "supermajority",
+  "created_at": 1782771034.3958774,
+  "status": "running",
+  "agents": [
+    {
+      "id": "coder-01",
+      "role": "coder",
+      "backend": "shell",
+      "model": "default",
+      "read_only": false
+    },
+    {
+      "id": "reviewer-01",
+      "role": "reviewer",
+      "backend": "shell",
+      "model": "default",
+      "read_only": true
+    },
+    {
+      "id": "researcher-01",
+      "role": "researcher",
+      "backend": "shell",
+      "model": "default",
+      "read_only": true
+    }
+  ]
+}
