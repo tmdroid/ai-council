@@ -1,0 +1,292 @@
+# AI Council Configuration
+# =============================================================================
+# This file configures which CLI backends are available, which models they
+# offer, and how agents are assigned to roles.
+#
+# The supervisor (Hermes) reads this config, does initial task research,
+# and dynamically decides which agents to spawn. You can override the
+# supervisor's choices by specifying agents explicitly in the `agents` section.
+#
+# Backends are extensible — add any CLI that can receive a text prompt and
+# produce a text response. The backend registry knows how to invoke each one.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# CLI BACKENDS — which agent CLIs are installed and available
+# -----------------------------------------------------------------------------
+# Each backend declares:
+#   enabled:      whether this CLI is installed and authenticated
+#   command:      the base command to invoke the CLI
+#   prompt_mode:  how to pass the prompt — "argument" (as CLI arg), "stdin"
+#                 (piped via stdin), or "file" (written to a temp file, path
+#                 passed as arg)
+#   read_only_flag:  flags to add when the agent should only read, not write
+#   write_flags:     flags to add when the agent can read and write
+#   models:       list of models this backend can serve
+#   auth:         how auth works — "oauth", "api-key", "env-var", "none"
+#   auth_env_var: environment variable that must be set (if auth is env-var)
+# -----------------------------------------------------------------------------
+
+backends:
+  claude-code:
+    enabled: true
+    command: "claude"
+    prompt_mode: "argument"          # prompt passed as -p 'prompt'
+    read_only_flags: ["-p", "--allowedTools", "Read", "--output-format", "json"]
+    write_flags: ["-p", "--allowedTools", "Read,Edit,Write,Bash", "--output-format", "json"]
+    extra_flags: ["--max-turns", "10"]  # added to every invocation
+    models:
+      - id: opus
+        name: "Claude Opus 4"
+        flag: "--model opus"
+        best_for: [planning, architecture, review, complex-reasoning]
+      - id: sonnet
+        name: "Claude Sonnet 4"
+        flag: "--model sonnet"
+        best_for: [coding, testing, general]
+      - id: haiku
+        name: "Claude Haiku"
+        flag: "--model haiku"
+        best_for: [simple-tasks, quick-review]
+    auth: "oauth"                     # claude auth login
+    notes: "Can also use --model with Ollama-served models via ANTHROPIC_BASE_URL"
+
+  codex:
+    enabled: true
+    command: "codex"
+    prompt_mode: "argument"           # codex exec 'prompt'
+    read_only_flags: ["exec"]
+    write_flags: ["exec", "--full-auto"]
+    extra_flags: []
+    models:
+      - id: gpt-5.5
+        name: "GPT 5.5"
+        flag: ""                       # codex uses default model
+        best_for: [coding, review]
+      - id: gpt-5.1
+        name: "GPT 5.1"
+        flag: "--model gpt-5.1"
+        best_for: [coding]
+    auth: "api-key"                    # OPENAI_API_KEY
+    auth_env_var: "OPENAI_API_KEY"
+
+  copilot:
+    enabled: false                    # set to true if GitHub Copilot CLI is installed
+    command: "copilot"
+    prompt_mode: "argument"            # copilot --agent <agent-name> "prompt"
+    read_only_flags: []
+    write_flags: []
+    extra_flags: []
+    models:
+      - id: default
+        name: "GitHub Copilot Default"
+        flag: ""
+        best_for: [coding, review]
+    auth: "oauth"
+    notes: "Requires GitHub Copilot CLI. Can use --agent flag for custom agents."
+
+  ollama:
+    enabled: false                     # set to true if Ollama is installed
+    command: "ollama"
+    prompt_mode: "stdin"               # echo 'prompt' | ollama run model
+    read_only_flags: ["run"]
+    write_flags: ["run"]
+    extra_flags: []
+    models:
+      - id: glm-5.2
+        name: "GLM 5.2 (Ollama Cloud)"
+        flag: "glm-5.2"                # ollama run glm-5.2
+        best_for: [coding, general, review]
+      - id: llama3.3
+        name: "Llama 3.3 (Ollama)"
+        flag: "llama3.3"
+        best_for: [general, coding]
+      - id: qwen3-32b
+        name: "Qwen 3 32B (Ollama)"
+        flag: "qwen3:32b"
+        best_for: [coding, general]
+    auth: "none"
+    notes: "Local or Ollama Cloud models. No API key needed for local."
+
+  opencode:
+    enabled: false
+    command: "opencode"
+    prompt_mode: "argument"             # opencode run 'prompt'
+    read_only_flags: ["run"]
+    write_flags: ["run"]
+    extra_flags: []
+    models:
+      - id: default
+        name: "OpenCode Default"
+        flag: ""
+        best_for: [coding, review]
+    auth: "oauth"                       # opencode auth login
+
+  # Example: Claude Code running an Ollama-served model
+  # This uses the claude-code CLI but routes to a local Ollama model
+  claude-ollama:
+    enabled: false
+    command: "claude"
+    prompt_mode: "argument"
+    read_only_flags: ["-p", "--allowedTools", "Read", "--output-format", "json"]
+    write_flags: ["-p", "--allowedTools", "Read,Edit,Write,Bash", "--output-format", "json"]
+    extra_flags: ["--max-turns", "10"]
+    env:
+      ANTHROPIC_BASE_URL: "http://localhost:11434/v1"  # Ollama OpenAI-compatible endpoint
+    models:
+      - id: glm-5.2
+        name: "GLM 5.2 via Claude Code + Ollama"
+        flag: "--model glm-5.2"
+        best_for: [coding, review, general]
+    auth: "none"
+    notes: "Claude Code CLI as the harness, but model served by Ollama. Set ANTHROPIC_BASE_URL to Ollama endpoint."
+
+  # Custom shell backend — escape hatch for any other CLI
+  shell:
+    enabled: true
+    command: ""                          # set per-agent or per-invocation
+    prompt_mode: "stdin"                  # prompt piped to stdin
+    read_only_flags: []
+    write_flags: []
+    extra_flags: []
+    models:
+      - id: default
+        name: "Custom Shell Command"
+        flag: ""
+        best_for: []
+    auth: "none"
+
+# -----------------------------------------------------------------------------
+# AGENT ROLES — the fixed vocabulary of agent types
+# -----------------------------------------------------------------------------
+# The supervisor uses these roles when composing a team. Each role has a
+# description that becomes the system prompt for that agent.
+# -----------------------------------------------------------------------------
+
+roles:
+  supervisor:
+    description: "Orchestrates the council, gates votes, presents results to the human. Decides when to call votes and when the task is complete."
+    default_backend: claude-code
+    default_model: opus
+    can_vote: true
+    can_propose_vote: true
+    read_only: true
+
+  planner:
+    description: "Breaks down tasks into bite-sized implementation steps. Writes structured plans with exact file paths, test targets, and verification steps."
+    default_backend: claude-code
+    default_model: opus
+    can_vote: true
+    can_propose_vote: true
+    read_only: true
+
+  architect:
+    description: "Designs system-level approach, evaluates architectural tradeoffs, ensures the plan follows repo patterns and industry best practices."
+    default_backend: claude-code
+    default_model: opus
+    can_vote: true
+    can_propose_vote: true
+    read_only: true
+
+  coder:
+    description: "Implements features following the plan and repo patterns. Writes tests (TDD). Runs tests after each change. Commits when green."
+    default_backend: codex
+    default_model: gpt-5.5
+    can_vote: true
+    can_propose_vote: false
+    read_only: false
+
+  reviewer:
+    description: "Critically examines plans, code, and tests. Checks for bugs, security issues, missing edge cases, repo pattern violations, and test coverage gaps. Be specific with file/line references."
+    default_backend: claude-code
+    default_model: sonnet
+    can_vote: true
+    can_propose_vote: true
+    read_only: true
+
+  tester:
+    description: "Writes and runs tests. Verifies test coverage. Ensures edge cases are covered. Reports test results to the council."
+    default_backend: codex
+    default_model: gpt-5.5
+    can_vote: true
+    can_propose_vote: false
+    read_only: false
+
+  researcher:
+    description: "Explores the repository, extracts patterns, naming conventions, build commands, test frameworks. Builds a context dossier for the council."
+    default_backend: claude-code
+    default_model: sonnet
+    can_vote: false
+    can_propose_vote: false
+    read_only: true
+
+  security:
+    description: "Security-focused review of code and architecture. Checks for injection vulnerabilities, auth flaws, secrets in code, unsafe deserialization."
+    default_backend: claude-code
+    default_model: opus
+    can_vote: true
+    can_propose_vote: true
+    read_only: true
+
+# -----------------------------------------------------------------------------
+# CONSENSUS — voting configuration
+# -----------------------------------------------------------------------------
+consensus:
+  rule: majority             # majority | supermajority | unanimous
+  min_voters: 2              # minimum agents that must vote (excluding non-voting roles)
+  debate_rounds: 3           # max debate rounds before forcing a vote
+  revote_on_fail: true       # if vote fails, allow re-debate and re-vote
+
+# -----------------------------------------------------------------------------
+# AGENTS — explicit agent assignments (optional)
+# -----------------------------------------------------------------------------
+# If this section is present, the supervisor spawns exactly these agents.
+# If absent, the supervisor does task research and decides the team composition.
+#
+# Each agent:
+#   id:         unique identifier
+#   role:       one of the roles defined above
+#   backend:    one of the backends defined above
+#   model:      one of the models listed for that backend
+#   read_only:  override the role's default read_only setting
+#   max_turns:  override max turns for this agent
+# -----------------------------------------------------------------------------
+
+# Example: uncomment to force a specific team
+# agents:
+#   - id: planner-01
+#     role: planner
+#     backend: claude-code
+#     model: opus
+#     read_only: true
+#
+#   - id: coder-01
+#     role: coder
+#     backend: codex
+#     model: gpt-5.5
+#     read_only: false
+#     max_turns: 30
+#
+#   - id: reviewer-01
+#     role: reviewer
+#     backend: ollama
+#     model: glm-5.2
+#     read_only: true
+#
+#   - id: tester-01
+#     role: tester
+#     backend: claude-code
+#     model: sonnet
+#     read_only: false
+
+agents: null    # null = supervisor decides dynamically
+
+# -----------------------------------------------------------------------------
+# SESSION — council session parameters
+# -----------------------------------------------------------------------------
+session:
+  max_rounds: 30              # max conversation rounds per agent
+  poll_interval: 2.0          # seconds between bus polls
+  bus_port: 8747              # bus HTTP port (0 = auto-select)
+  workdir: "."                # default working directory
+  anonymous_review: false     # hide agent identities during review (anti-bias)

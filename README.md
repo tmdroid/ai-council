@@ -1,56 +1,59 @@
 # AI Council
 
-A multi-agent collaboration harness where AI agents (coordinator, reviewer, coder)
-work together in a shared conversation with voting-based consensus, like an extreme
-programming peer review session.
+A multi-agent collaboration harness where AI agents work together in a shared
+conversation with voting-based consensus, like an extreme programming peer
+review session. The supervisor dynamically composes a team based on task
+analysis, assigns backends and models from a YAML config, and agents
+debate/vote/implement through iterative rounds.
 
 ## Architecture
 
 ```
-                    ┌──────────────────────┐
-                    │    Council Bus        │
-                    │  (HTTP message server) │
-                    │                       │
-                    │  - Message history    │
-                    │  - Member registry     │
-                    │  - Voting system      │
-                    │  - Consensus rules    │
-                    └──────┬───────┬───────┘
-                           │       │       │
-            ┌──────────────┘       │       └──────────────┐
-            │                      │                      │
-     ┌──────▼──────┐      ┌────────▼────────┐    ┌────────▼────────┐
-     │ Coordinator │      │    Reviewer     │    │      Coder      │
-     │  (Hermes)   │      │ (Claude Code)   │    │   (Codex CLI)   │
-     │             │      │  --read-only    │    │  --full-auto    │
-     │ Orchestrates│      │  Reviews plans  │    │  Implements     │
-     │ Posts tasks │      │  Reviews code   │    │  Writes tests   │
-     │ Calls votes │      │  Votes on work  │    │  Votes on plans │
-     └─────────────┘      └─────────────────┘    └─────────────────┘
+                 council.yaml (config)
+                 ┌────────────────────────────┐
+                 │ backends: claude-code,     │
+                 │   codex, ollama, copilot,  │
+                 │   claude-ollama, shell     │
+                 │ roles: supervisor, planner,│
+                 │   architect, coder,        │
+                 │   reviewer, tester,        │
+                 │   researcher, security     │
+                 │ consensus: majority/      │
+                 │   supermajority/unanimous │
+                 └─────────────┬──────────────┘
+                               │
+                 ┌─────────────▼──────────────┐
+                 │    Council Supervisor       │
+                 │  (analyzes task, composes   │
+                 │   team, starts bus, spawns  │
+                 │   agents, monitors)         │
+                 └─────────────┬──────────────┘
+                               │
+                 ┌─────────────▼──────────────┐
+                 │      Council Bus (HTTP)     │
+                 │  messages | voting | members│
+                 └──┬──────┬──────┬──────┬───┘
+                    │      │      │      │
+              ┌─────▼┐ ┌──▼───┐ ┌▼────┐ ┌▼─────┐
+              │agent1│ │agent2│ │agent3│ │agent4│
+              │(plan)│ │(code)│ │(rev) │ │(test)│
+              │claude│ │codex │ │ollama│ │claude│
+              └──────┘ └──────┘ └──────┘ └──────┘
 ```
 
-### Components
+## Files
 
-1. **`council_bus.py`** — HTTP message bus (chat room + voting system)
-   - Agents join with a role and post messages visible to all
-   - Any agent can propose a vote; all members must respond
-   - Consensus rules: majority, supermajority, or unanimous
-   - Full conversation history accessible to all agents
-
-2. **`council_agent.py`** — Agent harness that connects an external CLI to the bus
-   - Polls the bus for new messages and open votes
-   - Builds a prompt with conversation context + role description + pending votes
-   - Sends the prompt to the agent CLI (Claude Code, Codex, OpenCode, or custom)
-   - Parses the response for messages, vote responses, and vote proposals
-   - Posts everything back to the bus
-
-3. **`council_run.py`** — Entry point script that starts everything
-   - Starts the bus
-   - Spawns the reviewer and coder agents
-   - Coordinator (you/Hermes) joins and posts the task
-   - Monitors the conversation and prints it live
-
-4. **`test_council.py`** — Integration test (no external CLIs needed)
+```
+ai-council/
+├── council.yaml            # Config: backends, roles, models, consensus
+├── council_backends.py     # Extensible backend registry (CLI plugins)
+├── council_bus.py           # HTTP message bus + voting + prompt builder
+├── council_agent.py         # Config-driven agent harness (connects CLIs to bus)
+├── council_supervisor.py    # Dynamic team composition + session orchestration
+├── test_council.py          # Integration test (no external CLIs needed)
+├── README.md               # This file
+└── .gitignore
+```
 
 ## Quick Start
 
@@ -61,73 +64,160 @@ cd ~/ai-council
 python3 test_council.py
 ```
 
-### Run a real council session
+### Dry run — see what team the supervisor would compose
 
 ```bash
-# With Claude Code (reviewer) + Codex (coder)
-python3 council_run.py \
+python3 council_supervisor.py \
     --task "Add dark mode toggle to settings screen" \
     --workdir ~/my-repo \
-    --reviewer-backend claude-code \
-    --coder-backend codex \
-    --consensus majority
-
-# With Claude Code for both roles
-python3 council_run.py \
-    --task "Refactor auth module to use JWT" \
-    --workdir ~/my-repo \
-    --reviewer-backend claude-code \
-    --coder-backend claude-code \
-    --consensus supermajority
-
-# Dry run (dummy agents, for testing the harness)
-python3 council_run.py \
-    --task "Test task" \
-    --workdir /tmp \
     --dry-run
 ```
 
-### Manual bus interaction (for debugging or custom agents)
+### Run a real council session
 
 ```bash
-# Start the bus
-python3 council_bus.py --port 8747 --consensus majority
+python3 council_supervisor.py \
+    --task "Add dark mode toggle to settings" \
+    --workdir ~/my-repo \
+    --consensus majority
+```
 
-# Join
-curl -X POST http://127.0.0.1:8747/join \
-  -d '{"agent_id":"my-agent","role":"reviewer","model":"custom"}'
+## council.yaml Configuration
 
-# Post a message
-curl -X POST http://127.0.0.1:8747/message \
-  -d '{"agent_id":"my-agent","content":"The plan looks good"}'
+### Backends (extensible — add any CLI)
 
-# Read the conversation
-curl http://127.0.0.1:8747/messages | python3 -m json.tool
+```yaml
+backends:
+  claude-code:
+    enabled: true
+    command: "claude"
+    prompt_mode: "argument"      # argument | stdin | file
+    read_only_flags: ["-p", "--allowedTools", "Read", "--output-format", "json"]
+    write_flags: ["-p", "--allowedTools", "Read,Edit,Write,Bash", "--output-format", "json"]
+    models:
+      - id: opus
+        flag: "--model opus"
+        best_for: [planning, review]
+      - id: sonnet
+        flag: "--model sonnet"
+        best_for: [coding, general]
+    auth: "oauth"
 
-# Propose a vote
-curl -X POST http://127.0.0.1:8747/vote/propose \
-  -d '{"agent_id":"my-agent","proposal":"Approve the plan","options":["approve","reject"]}'
+  codex:
+    enabled: true
+    command: "codex"
+    write_flags: ["exec", "--full-auto"]
+    models:
+      - id: gpt-5.5
+        best_for: [coding, review]
+    auth: "api-key"
+    auth_env_var: "OPENAI_API_KEY"
 
-# Respond to a vote
-curl -X POST http://127.0.0.1:8747/vote/respond \
-  -d '{"agent_id":"my-agent","vote_id":"abc12345","response":"approve","rationale":"looks good"}'
+  ollama:
+    enabled: false              # set true when installed
+    command: "ollama"
+    prompt_mode: "stdin"
+    models:
+      - id: glm-5.2
+        flag: "glm-5.2"
+        best_for: [coding, general]
 
-# Check room state
-curl http://127.0.0.1:8747/room | python3 -m json.tool
+  # Claude Code running an Ollama model
+  claude-ollama:
+    enabled: false
+    command: "claude"
+    env:
+      ANTHROPIC_BASE_URL: "http://localhost:11434/v1"
+    models:
+      - id: glm-5.2
+        flag: "--model glm-5.2"
+
+  copilot:
+    enabled: false              # set true when Copilot CLI installed
+
+  # Escape hatch for any other CLI
+  shell:
+    enabled: true
+    prompt_mode: "stdin"
+```
+
+### Roles (fixed vocabulary)
+
+```yaml
+roles:
+  supervisor:   # orchestrates, gates votes, presents to human
+  planner:      # breaks down tasks, writes implementation plans
+  architect:    # designs system approach, evaluates tradeoffs
+  coder:        # implements features, writes code (read-write)
+  reviewer:     # reviews plans and code (read-only)
+  tester:       # writes and runs tests (read-write)
+  researcher:   # explores repo, extracts patterns (read-only)
+  security:     # security-focused review (read-only)
+```
+
+Each role has: description, default_backend, default_model, can_vote,
+can_propose_vote, read_only.
+
+### Consensus
+
+```yaml
+consensus:
+  rule: majority       # majority | supermajority | unanimous
+  debate_rounds: 3
+  revote_on_fail: true
+```
+
+### Explicit agents (optional — overrides auto-composition)
+
+```yaml
+agents:
+  - id: planner-01
+    role: planner
+    backend: claude-code
+    model: opus
+  - id: coder-01
+    role: coder
+    backend: codex
+    model: gpt-5.5
+agents: null    # null = supervisor decides dynamically
+```
+
+## Dynamic Team Composition
+
+The supervisor analyzes the task and decides:
+
+1. **Complexity** (simple/moderate/complex) based on keywords and role needs
+2. **Required roles** based on task type:
+   - Security keywords (auth, vulnerability, token) -> add security reviewer
+   - Architecture keywords (refactor, migrate, design) -> add architect
+   - Testing keywords (test, coverage, TDD) -> add tester
+   - Research keywords (explore, investigate) -> add researcher
+   - Large repo (>50 source files) -> add researcher
+   - Complex task -> add planner + second coder
+3. **Backend assignment** — distributes across available backends so
+   reviewer and coder use different models when possible
+
+### Examples
+
+```
+"Fix typo in README"                    -> 2 agents (coder + reviewer)
+"Add API endpoint with error handling"  -> 4 agents (coder, reviewer, planner, researcher)
+"Migrate auth to JWT + security review" -> 7 agents (security, architect, tester,
+                                                 2x coder, reviewer, planner)
 ```
 
 ## How Agents Communicate
 
-Each agent CLI (Claude Code, Codex) runs in its own process. The harness
+Each agent CLI (Claude Code, Codex, Ollama) runs in its own process. The harness
 (`council_agent.py`) wraps it:
 
 1. **Poll**: The harness polls the bus for new messages and open votes
 2. **Build prompt**: It constructs a prompt containing:
-   - The agent's role description
-   - The full conversation history
+   - The agent's role description (from YAML)
+   - The full conversation history (last 80 messages)
    - Any open votes that need a response
    - The working directory and context
-3. **Execute**: It runs the agent CLI (e.g., `claude -p '...' --allowedTools Read`)
+3. **Execute**: It runs the agent CLI via the backend registry
 4. **Parse**: It scans the response for structured actions:
    - `VOTE: <vote_id> <option> -- <rationale>` — respond to a vote
    - `PROPOSE_VOTE: <proposal> | options: <opt1, opt2>` — call a new vote
@@ -135,13 +225,7 @@ Each agent CLI (Claude Code, Codex) runs in its own process. The harness
 5. **Post**: It posts the message and any vote actions to the bus
 6. **Loop**: Back to step 1
 
-This means agents don't need to know about HTTP or the bus protocol — they
-just need to be able to read a prompt and produce text. Any CLI agent that
-can do that can join the council.
-
 ## Voting and Consensus
-
-### Consensus Rules
 
 | Rule          | Requirement                    | Result String              |
 |---------------|--------------------------------|----------------------------|
@@ -150,53 +234,20 @@ can do that can join the council.
 | `unanimous`   | 100% approve, no dissent       | `approved_unanimous`        |
 
 If consensus is not reached, the vote status is `failed_no_consensus` and
-the council continues debating.
+the council continues debating until a new vote is called.
 
-### Vote Flow
+## Adding a New Backend
 
-1. Any agent proposes a vote: `PROPOSE_VOTE: Should we use approach X?`
-2. The bus creates the vote and notifies all members
-3. Each agent responds: `VOTE: <id> approve -- because...`
-4. When all members have voted, the bus tallies and closes the vote
-5. The result is posted to the conversation as a system message
-6. If failed, the council discusses and a new vote may be proposed
+1. Add it to `backends:` in council.yaml
+2. Set `enabled: true` when the CLI is installed
+3. The backend registry auto-detects availability via `shutil.which()`
+4. No code changes needed — the agent harness reads the config
 
-## Backends
+## Requirements
 
-| Backend       | Command                                      | Notes                           |
-|---------------|----------------------------------------------|---------------------------------|
-| `claude-code` | `claude -p '...' --allowedTools Read`        | Best for reviewer (read-only)   |
-| `codex`       | `codex exec --full-auto '...'`              | Best for coder (write access)   |
-| `opencode`    | `opencode run '...'`                         | Provider-agnostic               |
-| `shell`       | Custom `--command '...'` (gets prompt via stdin) | For any other agent      |
-| `subagent`    | Prints prompt, reads response from stdin    | For Hermes delegate_task        |
-
-## Installation
-
-No external dependencies — pure Python stdlib. Just install the agent CLIs
-you want to use:
-
-```bash
-# Claude Code
-npm install -g @anthropic-ai/claude-code
-claude auth login
-
-# Codex
-npm install -g @openai/codex
-# Set OPENAI_API_KEY or login
-
-# OpenCode
-npm i -g opencode-ai@latest
-opencode auth login
-```
-
-## Files
-
-```
-ai-council/
-├── council_bus.py      # HTTP message bus with voting
-├── council_agent.py    # Agent harness (connects CLI to bus)
-├── council_run.py      # Entry point (starts bus + spawns agents)
-├── test_council.py     # Integration test (no CLIs needed)
-└── README.md           # This file
-```
+- Python 3.11+ with PyYAML (`pip install pyyaml`)
+- At least one agent CLI installed for real sessions:
+  - `npm install -g @anthropic-ai/claude-code` + `claude auth login`
+  - `npm install -g @openai/codex` + set OPENAI_API_KEY
+  - `npm i -g opencode-ai@latest` + `opencode auth login`
+- The `shell` backend is always available as a fallback

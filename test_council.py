@@ -1,203 +1,280 @@
 #!/usr/bin/env python3
 """
-Council test — validates the bus, voting, and agent harness end-to-end
-without needing Claude Code, Codex, or any external CLI installed.
-
-Runs a simulated council session with 3 Python-based dummy agents
-that talk through the bus, call votes, and reach consensus.
+Council Integration Test — validates config-driven backends, dynamic
+team composition, the bus, voting, and the agent harness.
 """
 
 import json
-import threading
-import time
-import sys
 import os
-import urllib.request
+import sys
+import time
+import threading
+import subprocess
+from pathlib import Path
 
-# Add parent to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from council_bus import CouncilBus, BusHandler, ThreadingHTTPServer
-from council_agent import BusClient, build_prompt, parse_response
+sys.path.insert(0, str(Path(__file__).parent))
+from council_backends import BackendRegistry, load_config, Backend
+from council_bus import BusClient, start_bus_server, build_prompt, parse_response, CouncilBus, ThreadingHTTPServer, BusHandler
+from council_supervisor import analyze_task, compose_team
 
 
-def start_bus(port=8750, consensus="majority"):
-    """Start bus in a background thread."""
+def test_config_loading():
+    """Test that council.yaml loads correctly."""
+    print("[1] Loading council.yaml...")
+    config_path = str(Path(__file__).parent / "council.yaml")
+    config = load_config(config_path)
+    
+    assert "backends" in config, "Missing backends section"
+    assert "roles" in config, "Missing roles section"
+    assert "consensus" in config, "Missing consensus section"
+    
+    backends = config["backends"]
+    assert "claude-code" in backends, "Missing claude-code backend"
+    assert "codex" in backends, "Missing codex backend"
+    assert "ollama" in backends, "Missing ollama backend"
+    assert "copilot" in backends, "Missing copilot backend"
+    assert "claude-ollama" in backends, "Missing claude-ollama backend"
+    
+    roles = config["roles"]
+    assert "supervisor" in roles, "Missing supervisor role"
+    assert "planner" in roles, "Missing planner role"
+    assert "coder" in roles, "Missing coder role"
+    assert "reviewer" in roles, "Missing reviewer role"
+    assert "architect" in roles, "Missing architect role"
+    assert "tester" in roles, "Missing tester role"
+    assert "researcher" in roles, "Missing researcher role"
+    assert "security" in roles, "Missing security role"
+    
+    print(f"  Config loaded: {len(backends)} backends, {len(roles)} roles")
+    print("  PASS")
+
+
+def test_backend_registry():
+    """Test backend registry."""
+    print("\n[2] Testing backend registry...")
+    config_path = str(Path(__file__).parent / "council.yaml")
+    config = load_config(config_path)
+    registry = BackendRegistry.from_config(config)
+    
+    # Check claude-code backend
+    claude = registry.get("claude-code")
+    assert claude is not None, "claude-code backend not found"
+    assert claude.prompt_mode == "argument", f"Expected argument, got {claude.prompt_mode}"
+    assert len(claude.models) >= 2, f"Expected 2+ models, got {len(claude.models)}"
+    
+    # Check model lookup
+    opus = claude.get_model("opus")
+    assert opus is not None, "opus model not found"
+    assert "planning" in opus.get("best_for", []), f"opus should be best for planning"
+    
+    # Check ollama backend
+    ollama = registry.get("ollama")
+    assert ollama is not None, "ollama backend not found"
+    assert ollama.prompt_mode == "stdin", f"Expected stdin, got {ollama.prompt_mode}"
+    
+    # Check claude-ollama (Claude Code with Ollama model)
+    claude_ollama = registry.get("claude-ollama")
+    assert claude_ollama is not None, "claude-ollama backend not found"
+    assert "ANTHROPIC_BASE_URL" in claude_ollama.env, "claude-ollama should set ANTHROPIC_BASE_URL"
+    
+    # Available backends (only shell should be available since no CLIs installed)
+    available = registry.list_available()
+    assert "shell" in available, "shell backend should always be available"
+    
+    print(f"  Available backends: {available}")
+    print(f"  claude-code models: {claude.list_models()}")
+    print(f"  ollama models: {ollama.list_models()}")
+    print(f"  claude-ollama env: {claude_ollama.env}")
+    print("  PASS")
+
+
+def test_task_analysis():
+    """Test dynamic task analysis."""
+    print("\n[3] Testing task analysis...")
+    
+    # Simple task
+    simple = analyze_task("Fix typo in README")
+    assert simple["complexity"] == "simple", f"Expected simple, got {simple['complexity']}"
+    assert "coder" in simple["needs"]
+    assert "reviewer" in simple["needs"]
+    assert "planner" not in simple["needs"]
+    print(f"  Simple task: {simple['complexity']}, team size: {len(simple['needs'])}")
+    
+    # Moderate task (1-2 complex keywords)
+    moderate = analyze_task("Add a new API endpoint with error handling")
+    assert moderate["complexity"] == "moderate", f"Expected moderate, got {moderate['complexity']}"
+    assert "planner" in moderate["needs"], "Moderate task should have planner"
+    print(f"  Moderate task: {moderate['complexity']}, team size: {len(moderate['needs'])}")
+    
+    # Complex task
+    complex_task = analyze_task("Migrate authentication from session to JWT, refactor for distributed deployment, add security review and integration tests")
+    assert complex_task["complexity"] == "complex", f"Expected complex, got {complex_task['complexity']}"
+    assert "security" in complex_task["needs"], "Complex auth task should have security"
+    assert "architect" in complex_task["needs"], "Complex refactor should have architect"
+    assert "tester" in complex_task["needs"], "Complex test task should have tester"
+    assert complex_task["needs"].count("coder") == 2, "Complex task should have 2 coders"
+    print(f"  Complex task: {complex_task['complexity']}, team size: {len(complex_task['needs'])}")
+    
+    # Security task
+    security_task = analyze_task("Fix the authentication vulnerability in the login flow")
+    assert "security" in security_task["needs"], "Security task should have security reviewer"
+    print(f"  Security task: detected security reviewer")
+    
+    print("  PASS")
+
+
+def test_team_composition():
+    """Test team composition with config."""
+    print("\n[4] Testing team composition...")
+    config_path = str(Path(__file__).parent / "council.yaml")
+    config = load_config(config_path)
+    registry = BackendRegistry.from_config(config)
+    available = registry.list_available()
+    
+    analysis = analyze_task("Complex migration with security review and testing")
+    agents = compose_team(analysis, config, registry, available)
+    
+    assert len(agents) > 0, "Should have composed at least 1 agent"
+    assert all("id" in a for a in agents), "All agents should have IDs"
+    assert all("role" in a for a in agents), "All agents should have roles"
+    assert all("backend" in a for a in agents), "All agents should have backends"
+    
+    print(f"  Composed {len(agents)} agents:")
+    for a in agents:
+        ro = "RO" if a["read_only"] else "RW"
+        print(f"    {a['id']:15s} [{a['role']:12s}] {a['backend']:15s} {ro}")
+    print("  PASS")
+
+
+def test_bus():
+    """Test bus server."""
+    print("\n[5] Testing bus...")
+    
+    # Start bus in a thread
     bus = CouncilBus()
-    bus.consensus_rule = consensus
-    # Monkey-patch the singleton
     import council_bus
     council_bus.BUS = bus
-
-    server = ThreadingHTTPServer(("127.0.0.1", port), BusHandler)
+    
+    server = ThreadingHTTPServer(("127.0.0.1", 8751), BusHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
-    return server, bus, f"http://127.0.0.1:{port}"
+    time.sleep(0.5)
+    
+    client = BusClient("http://127.0.0.1:8751")
+    
+    # Join agents
+    for aid, role, model in [("sup", "supervisor", "hermes"), ("plan1", "planner", "opus"),
+                              ("cod1", "coder", "codex"), ("rev1", "reviewer", "sonnet")]:
+        r = client.join(aid, role, model)
+        assert "error" not in r, f"Join failed: {r}"
+    
+    room = client.get_room()
+    assert len(room["members"]) == 4, f"Expected 4 members, got {len(room['members'])}"
+    print(f"  4 agents joined")
+    
+    # Post messages
+    client.post_message("sup", "Council task: implement feature X", "task")
+    client.post_message("plan1", "I'll analyze the repo and create a plan")
+    print(f"  Messages posted")
+    
+    # Vote
+    vote = client.propose_vote("sup", "Approve plan for feature X", ["approve", "reject", "request_changes"])
+    vote_id = vote["vote_id"]
+    
+    for aid, resp in [("sup", "approve"), ("plan1", "approve"), ("cod1", "approve"), ("rev1", "approve")]:
+        r = client.respond_vote(aid, vote_id, resp, "ok")
+    
+    room = client.get_room()
+    assert len(room["open_votes"]) == 0, "Vote should be closed"
+    print(f"  Vote closed with consensus")
+    
+    # Test prompt builder with role description
+    msgs = client.get_messages(since=0)
+    prompt = build_prompt(
+        role="reviewer",
+        role_description="You are a code reviewer. Check for bugs and patterns.",
+        conversation=msgs["messages"],
+        open_votes=[],
+        agent_id="rev1",
+        round_num=1,
+        workdir="/tmp",
+    )
+    assert "REVIEWER" in prompt, f"Role should be in prompt: {prompt[:200]}"
+    assert "You are a code reviewer" in prompt, "Role description should be in prompt"
+    assert "COUNCIL CONVERSATION" in prompt, "Conversation section should be in prompt"
+    print(f"  Prompt builder works ({len(prompt)} chars)")
+    
+    # Test parse_response
+    actions = parse_response("""
+I reviewed the code. It looks good.
+
+VOTE: abc12345 approve -- follows repo patterns
+
+DONE: review complete
+""")
+    assert actions["votes"][0]["vote_id"] == "abc12345"
+    assert actions["done"] == True
+    print(f"  Response parser works: {len(actions['votes'])} vote(s), done={actions['done']}")
+    
+    server.shutdown()
+    print("  PASS")
 
 
-def dummy_agent(bus_url, agent_id, role, responses, delay=0.5):
-    """Simulate an agent that posts messages and responds to votes."""
-    client = BusClient(bus_url)
-    client.join(agent_id, role, f"dummy-{role}")
+def test_backend_command_building():
+    """Test that backend commands are built correctly."""
+    print("\n[6] Testing backend command building...")
+    config_path = str(Path(__file__).parent / "council.yaml")
+    config = load_config(config_path)
+    registry = BackendRegistry.from_config(config)
+    
+    # Claude Code read-only command
+    claude = registry.get("claude-code")
+    cmd = claude.build_command("review this code", read_only=True, model_id="sonnet")
+    assert "claude" in cmd, f"Expected claude in cmd: {cmd}"
+    assert "-p" in cmd, f"Expected -p flag: {cmd}"
+    assert "Read" in cmd, f"Expected Read in allowedTools: {cmd}"
+    assert "--model" in cmd and "sonnet" in cmd, f"Expected model sonnet: {cmd}"
+    print(f"  claude-code RO: {' '.join(cmd[:6])}...")
+    
+    # Claude Code write command
+    cmd = claude.build_command("implement this", read_only=False, model_id="")
+    assert "Read,Edit,Write,Bash" in cmd, f"Expected write tools: {cmd}"
+    print(f"  claude-code RW: {' '.join(cmd[:6])}...")
+    
+    # Codex command
+    codex = registry.get("codex")
+    cmd = codex.build_command("implement this", read_only=False, model_id="")
+    assert "codex" in cmd, f"Expected codex in cmd: {cmd}"
+    assert "exec" in cmd, f"Expected exec: {cmd}"
+    assert "--full-auto" in cmd, f"Expected --full-auto: {cmd}"
+    print(f"  codex RW: {' '.join(cmd)}")
+    
+    # Ollama command (stdin mode)
+    ollama = registry.get("ollama")
+    cmd = ollama.build_command("review this", read_only=True, model_id="glm-5.2")
+    assert "ollama" in cmd, f"Expected ollama in cmd: {cmd}"
+    assert "glm-5.2" in cmd, f"Expected glm-5.2 model: {cmd}"
+    print(f"  ollama: {' '.join(cmd)}")
+    
+    print("  PASS")
 
-    for resp in responses:
-        time.sleep(delay)
 
-        # Post message
-        if resp.get("message"):
-            client.post_message(agent_id, resp["message"])
-
-        # Respond to votes
-        if resp.get("vote_id") and resp.get("vote_response"):
-            client.respond_vote(agent_id, resp["vote_id"], resp["vote_response"], resp.get("rationale", ""))
-
-        # Propose vote
-        if resp.get("propose_vote"):
-            result = client.propose_vote(agent_id, resp["propose_vote"], resp.get("options"))
-            # Store the vote_id for others to use
-            resp["actual_vote_id"] = result.get("vote_id")
-
-
-def run_test():
+def main():
     print("=" * 60)
     print("  AI COUNCIL — Integration Test")
     print("=" * 60)
-
-    # Start bus
-    port = 8750
-    server, bus, bus_url = start_bus(port, "majority")
-    print(f"\n  Bus started on port {port}")
-
-    # Wait for bus
-    time.sleep(0.5)
-
-    client = BusClient(bus_url)
-
-    # 1. Join all three agents
-    print("\n[1] Joining agents...")
-    for aid, role in [("coord", "coordinator"), ("rev1", "reviewer"), ("cod1", "coder")]:
-        r = client.join(aid, role, f"test-{role}")
-        assert "error" not in r, f"Join failed: {r}"
-    room = client.get_room()
-    assert len(room["members"]) == 3, f"Expected 3 members, got {len(room['members'])}"
-    print(f"  3 agents joined: {list(room['members'].keys())}")
-
-    # 2. Post task message
-    print("\n[2] Posting task...")
-    msg = client.post_message("coord", "TASK: Add hello world function to src/main.py", "task")
-    assert msg.get("id"), "Message post failed"
-    print(f"  Task posted: {msg['id'][:8]}")
-
-    # 3. Reviewer posts analysis
-    print("\n[3] Reviewer analyzes repo...")
-    msg = client.post_message("rev1", "I checked the repo. src/main.py exists and uses snake_case. The function should follow that pattern.")
-    print(f"  Reviewer message posted")
-
-    # 4. Coordinator proposes vote
-    print("\n[4] Coordinator proposes plan vote...")
-    vote = client.propose_vote("coord", "Plan: add hello_world() to src/main.py with test", ["approve", "reject", "request_changes"])
-    vote_id = vote["vote_id"]
-    print(f"  Vote: {vote_id}")
-
-    # 5. All agents vote
-    print("\n[5] Agents vote...")
-    for aid, resp, rationale in [
-        ("coord", "approve", "I proposed it"),
-        ("rev1", "approve", "Plan follows repo patterns"),
-        ("cod1", "approve", "Ready to implement"),
-    ]:
-        r = client.respond_vote(aid, vote_id, resp, rationale)
-        print(f"  {aid}: {resp} -> {r['status']}")
-
-    # Check vote closed
-    room = client.get_room()
-    assert len(room["open_votes"]) == 0, "Vote should be closed"
-    print(f"  Vote closed! Open votes: {len(room['open_votes'])}")
-
-    # 6. Coder posts implementation
-    print("\n[6] Coder implements...")
-    client.post_message("cod1", "IMPLEMENTATION_COMPLETE: Added hello_world() to src/main.py and test_hello.py. All tests pass.")
-    print(f"  Implementation posted")
-
-    # 7. Coordinator proposes acceptance vote
-    print("\n[7] Coordinator proposes acceptance vote...")
-    vote2 = client.propose_vote("coord", "Accept the implementation?", ["approve", "reject", "request_changes"])
-    vote2_id = vote2["vote_id"]
-    print(f"  Vote: {vote2_id}")
-
-    # 8. Reviewer requests changes
-    print("\n[8] Reviewer requests changes...")
-    r = client.respond_vote("rev1", vote2_id, "request_changes", "Need to add type hints")
-    print(f"  Reviewer: request_changes -> {r['status']}")
-
-    # Coder and coord approve
-    client.respond_vote("cod1", vote2_id, "approve", "I'll add type hints")
-    r = client.respond_vote("coord", vote2_id, "approve", "Acceptable")
-    print(f"  Vote result: {r['status']}, tally: {r.get('tally')}")
-
-    # 9. Check consensus rules
-    print("\n[9] Testing unanimous consensus...")
-    import council_bus
-    council_bus.BUS.consensus_rule = "unanimous"
-    vote3 = client.propose_vote("coord", "Final acceptance with type hints?", ["approve", "reject"])
-    vote3_id = vote3["vote_id"]
-    client.respond_vote("coord", vote3_id, "approve", "yes")
-    client.respond_vote("cod1", vote3_id, "approve", "yes")
-    r = client.respond_vote("rev1", vote3_id, "reject", "Still needs docstring")
-    print(f"  Unanimous vote (1 reject): {r['status']}")
-    assert r["status"] == "failed_no_consensus", f"Expected failed_no_consensus, got {r['status']}"
-
-    # Now all approve
-    vote4 = client.propose_vote("coord", "Final acceptance with type hints and docstring?", ["approve", "reject"])
-    vote4_id = vote4["vote_id"]
-    client.respond_vote("coord", vote4_id, "approve", "yes")
-    client.respond_vote("cod1", vote4_id, "approve", "yes")
-    r = client.respond_vote("rev1", vote4_id, "approve", "Looks good now")
-    print(f"  Unanimous vote (all approve): {r['status']}")
-    assert r["status"] == "approved_unanimous", f"Expected approved_unanimous, got {r['status']}"
-
-    # 10. Verify conversation
-    print("\n[10] Verifying conversation...")
-    msgs = client.get_messages(since=0)
-    total = msgs.get("count", 0)
-    print(f"  Total messages: {total}")
-    assert total > 10, f"Expected >10 messages, got {total}"
-
-    # Show conversation
-    print("\n  === Conversation log ===")
-    for m in msgs["messages"]:
-        role = m["role"]
-        content = m["content"]
-        if len(content) > 100:
-            content = content[:100] + "..."
-        mtype = m.get("type", "message")
-        marker = ">>>" if mtype != "message" else "  "
-        print(f"  {marker} [{role}] {content}")
-
-    # Test agent harness parsing
-    print("\n[11] Testing agent response parser...")
-    test_response = """
-I reviewed the plan. It looks good overall.
-
-VOTE: abc12345 approve -- The plan follows repo patterns correctly.
-
-PROPOSE_VOTE: Should we add error handling? | options: yes, no, defer
-
-DONE: review complete
-"""
-    actions = parse_response(test_response)
-    assert actions["votes"][0]["vote_id"] == "abc12345", f"Vote parse failed: {actions['votes']}"
-    assert actions["votes"][0]["response"] == "approve", f"Vote response parse failed"
-    assert actions["propose_vote"]["proposal"] == "Should we add error handling?", f"Propose vote parse failed"
-    assert actions["done"] == True, "Done flag not parsed"
-    print(f"  Parse OK: {len(actions['votes'])} vote(s), propose={actions['propose_vote'] is not None}, done={actions['done']}")
-
+    
+    test_config_loading()
+    test_backend_registry()
+    test_task_analysis()
+    test_team_composition()
+    test_bus()
+    test_backend_command_building()
+    
     print("\n" + "=" * 60)
     print("  ALL TESTS PASSED")
     print("=" * 60)
 
-    # Cleanup
-    server.shutdown()
-
 
 if __name__ == "__main__":
-    run_test()
+    main()
