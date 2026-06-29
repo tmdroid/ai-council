@@ -86,16 +86,20 @@ backends:
     notes: "Requires GitHub Copilot CLI. Can use --agent flag for custom agents."
 
   ollama:
-    enabled: false                     # set to true if Ollama is installed
+    enabled: true                      # Ollama is installed
     command: "ollama"
     prompt_mode: "stdin"               # echo 'prompt' | ollama run model
     read_only_flags: ["run"]
     write_flags: ["run"]
     extra_flags: []
     models:
+      - id: glm-5.2:cloud
+        name: "GLM 5.2 Cloud"
+        flag: "glm-5.2:cloud"
+        best_for: [coding, general, review]
       - id: glm-5.2
-        name: "GLM 5.2 (Ollama Cloud)"
-        flag: "glm-5.2"                # ollama run glm-5.2
+        name: "GLM 5.2 (local)"
+        flag: "glm-5.2"
         best_for: [coding, general, review]
       - id: llama3.3
         name: "Llama 3.3 (Ollama)"
@@ -191,7 +195,7 @@ roles:
   coder:
     description: "Implements features following the plan and repo patterns. Writes tests (TDD). Runs tests after each change. Commits when green."
     default_backend: codex
-    default_model: gpt-5.5
+    default_model: ""
     can_vote: true
     can_propose_vote: false
     read_only: false

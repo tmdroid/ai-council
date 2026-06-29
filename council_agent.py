@@ -44,7 +44,7 @@ def main():
                        help="Force read-only mode (overrides role config)")
     parser.add_argument("--context", default="", help="Extra context to inject into every prompt")
     parser.add_argument("--poll-interval", type=float, default=None, help="Seconds between bus polls")
-    parser.add_argument("--timeout", type=int, default=300, help="Timeout per CLI invocation (seconds)")
+    parser.add_argument("--timeout", type=int, default=600, help="Timeout per CLI invocation (seconds)")
     parser.add_argument("--dry-run", action="store_true",
                        help="Don't actually run the CLI — just print the prompt and exit")
     args = parser.parse_args()

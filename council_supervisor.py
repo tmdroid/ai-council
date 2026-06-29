@@ -159,24 +159,31 @@ def compose_team(analysis: dict, config: dict, registry: BackendRegistry,
       2. Availability of that backend
       3. Distribution — try to use different backends for different roles
          (so reviewer and coder aren't the same model)
+      4. Never use 'shell' backend when real AI backends are available
     """
     roles_cfg = config.get("roles", {})
     agents = []
     used_backends = set()
-    role_counts = {}  # track duplicate roles (coder-01, coder-02, etc.)
+    role_counts = {}
+
+    # Filter out shell from available if we have real backends
+    real_backends = [b for b in available_backends if b != "shell"]
+    backend_pool = real_backends if real_backends else available_backends
 
     for role in analysis["needs"]:
-        # Count role instances
         count = role_counts.get(role, 0) + 1
         role_counts[role] = count
         agent_id = f"{role}-{count:02d}"
 
-        # Get role config
         role_cfg = roles_cfg.get(role, {})
 
-        # Pick backend: prefer role's default, but distribute across available
+        # Pick backend: prefer role's default, then any unused, then any available
         default_backend = role_cfg.get("default_backend", "")
-        preferred = [default_backend] + [b for b in available_backends if b not in used_backends]
+        
+        # Build preference list: default first, then unused real backends, then any
+        preferred = [default_backend]
+        preferred += [b for b in backend_pool if b not in used_backends and b not in preferred]
+        preferred += [b for b in backend_pool if b not in preferred]
 
         backend_name = None
         for candidate in preferred:
@@ -185,21 +192,23 @@ def compose_team(analysis: dict, config: dict, registry: BackendRegistry,
                 break
 
         if not backend_name:
-            # Fallback to any available
-            for b in available_backends:
-                backend_name = b
-                break
-
-        if not backend_name:
             print(f"WARNING: No backend available for role {role}, skipping", file=sys.stderr)
             continue
 
-        used_backends.add(backend_name)
+        # Don't mark ollama as "used" — we can run multiple agents on the same Ollama
+        # since it supports concurrent requests. Only mark non-ollama backends as used
+        # to avoid assigning the same CLI to multiple agents.
+        if backend_name not in ("ollama", "shell"):
+            used_backends.add(backend_name)
 
         # Pick model
         backend = registry.get(backend_name)
         model_id = role_cfg.get("default_model", "")
         if model_id and not backend.get_model(model_id):
+            models = backend.list_models()
+            if models:
+                model_id = models[0]
+        elif not model_id:
             models = backend.list_models()
             if models:
                 model_id = models[0]

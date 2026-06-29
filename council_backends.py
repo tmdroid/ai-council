@@ -75,19 +75,19 @@ class Backend:
         if model_id:
             model = self.get_model(model_id)
             if model and model.get("flag"):
+                # For most backends, the flag is space-separated args
                 flags.extend(model["flag"].split())
+            elif model_id:
+                # If no flag defined, use the model id directly
+                flags.append(model_id)
 
         if self.prompt_mode == "argument":
-            # Prompt is passed as a CLI argument
             cmd = [self.command] + flags + [prompt]
             return cmd
         else:
-            # Prompt is passed via stdin or file
+            # For stdin mode (like ollama), the command is just the binary + flags
+            # The prompt will be piped via stdin in the run() method
             cmd = [self.command] + flags
-            # For ollama, the model name comes after 'run'
-            if self.name == "ollama" and model_id:
-                # ollama run <model> (prompt via stdin)
-                cmd = ["ollama", "run", model_id]
             return cmd
 
     def run(self, prompt: str, workdir: str, read_only: bool = True,

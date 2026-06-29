@@ -11,6 +11,7 @@ ExecStart=/usr/bin/python3 /home/hermes/ai-council/council_server.py
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/snap/bin:/home/hermes/.local/bin
 
 [Install]
 WantedBy=multi-user.target
