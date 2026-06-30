@@ -1,0 +1,97 @@
+{
+  "agents": [
+    {
+      "backend": "ollama",
+      "id": "researcher-01",
+      "model": "glm-5.2:cloud",
+      "read_only": true,
+      "role": "researcher"
+    },
+    {
+      "backend": "ollama",
+      "id": "reviewer-01",
+      "model": "glm-5.2:cloud",
+      "read_only": true,
+      "role": "reviewer"
+    },
+    {
+      "backend": "ollama",
+      "id": "security-01",
+      "model": "glm-5.2:cloud",
+      "read_only": true,
+      "role": "security"
+    }
+  ],
+  "consensus": "majority",
+  "created_at": 1782843414.9570656,
+  "id": "978abd4b",
+  "members": {
+    "human": {
+      "joined_at": 1782843414.9576786,
+      "model": "human",
+      "role": "supervisor"
+    },
+    "researcher-01": {
+      "joined_at": 1782843415.12825,
+      "model": "ollama/glm-5.2:cloud",
+      "role": "researcher"
+    },
+    "reviewer-01": {
+      "joined_at": 1782843415.1371157,
+      "model": "ollama/glm-5.2:cloud",
+      "role": "reviewer"
+    },
+    "security-01": {
+      "joined_at": 1782843415.1395445,
+      "model": "ollama/glm-5.2:cloud",
+      "role": "security"
+    }
+  },
+  "message_count": 5,
+  "messages": [
+    {
+      "agent_id": "human",
+      "content": "[supervisor] joined the council",
+      "id": "165a9b7c-b49d-4e1a-9c6c-8b0476ae8e13",
+      "role": "supervisor",
+      "timestamp": 1782843414.9577072,
+      "type": "system"
+    },
+    {
+      "agent_id": "human",
+      "content": "COUNCIL TASK: Deep review of the imnuri-azsmr hymns app codebase at /home/hermes/imnuri-azsmr. Identify vulnerabilities, defects, code quality issues, and improvement opportunities. Each agent should explore the repo, share findings, and the council should produce an agreed list of actionable items to improve.\n\nWorking directory: /home/hermes/imnuri-azsmr\nConsensus: majority\n\nSession created. The supervisor will assess the task and compose a team. Click 'Start Agents' when ready.",
+      "id": "da40e925-eb96-4eea-b617-07658b63c84a",
+      "role": "supervisor",
+      "timestamp": 1782843414.9579508,
+      "type": "task"
+    },
+    {
+      "agent_id": "researcher-01",
+      "content": "[researcher] joined the council",
+      "id": "7119a9a9-c398-45ce-ac38-38a7e596ded1",
+      "role": "researcher",
+      "timestamp": 1782843415.1283014,
+      "type": "system"
+    },
+    {
+      "agent_id": "reviewer-01",
+      "content": "[reviewer] joined the council",
+      "id": "0f6cd611-36f4-4b59-92be-2bd6863594f3",
+      "role": "reviewer",
+      "timestamp": 1782843415.137185,
+      "type": "system"
+    },
+    {
+      "agent_id": "security-01",
+      "content": "[security] joined the council",
+      "id": "34c266da-957b-40cb-8ad5-040b832e64b0",
+      "role": "security",
+      "timestamp": 1782843415.1396003,
+      "type": "system"
+    }
+  ],
+  "open_votes": [],
+  "status": "running",
+  "task": "Deep review of the imnuri-azsmr hymns app codebase at /home/hermes/imnuri-azsmr. Identify vulnerabilities, defects, code quality issues, and improvement opportunities. Each agent should explore the repo, share findings, and the council should produce an agreed list of actionable items to improve.",
+  "workdir": "/home/hermes/imnuri-azsmr"
+}

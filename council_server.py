@@ -181,45 +181,87 @@ class SessionRoom:
             }
 
     def start_agents(self, agents=None):
-        from council_supervisor import analyze_task, compose_team
-        config = load_config(self.config_path)
-        registry = BackendRegistry.from_config(config)
-        if agents:
-            self.agents = agents
-        else:
-            analysis = analyze_task(self.task, self.workdir)
-            available = registry.list_available()
-            self.agents = compose_team(analysis, config, registry, available)
+        """Start agent processes. Returns immediately — all work in background thread."""
+        def _start():
+            try:
+                from council_supervisor import analyze_task, compose_team
+                config = load_config(self.config_path)
+                registry = BackendRegistry.from_config(config)
+                if agents:
+                    self.agents = agents
+                else:
+                    analysis = analyze_task(self.task, self.workdir)
+                    available = registry.list_available()
+                    self.agents = compose_team(analysis, config, registry, available)
 
-        if self.human_id not in self.members:
-            self.join(self.human_id, "supervisor", "human")
-        if not any(m.get("type") == "task" for m in self.messages):
-            self.post_message(self.human_id,
-                f"COUNCIL TASK: {self.task}\n\nWorking directory: {self.workdir}\n"
-                f"Consensus: {self.consensus}\n\n"
-                "The supervisor has assembled this council. Review the task, discuss, "
-                "and agree on a plan before implementing.", "task")
+                if self.human_id not in self.members:
+                    self.join(self.human_id, "supervisor", "human")
+                if not any(m.get("type") == "task" for m in self.messages):
+                    self.post_message(self.human_id,
+                        f"COUNCIL TASK: {self.task}\n\nWorking directory: {self.workdir}\n"
+                        f"Consensus: {self.consensus}\n\n"
+                        "The supervisor has assembled this council. Review the task, discuss, "
+                        "and agree on a plan before implementing.", "task")
 
-        def _spawn():
-            agent_script = str(Path(__file__).parent / "council_agent.py")
-            for agent in self.agents:
-                if agent["id"] not in self.members:
-                    self.join(agent["id"], agent["role"], f"{agent['backend']}/{agent.get('model', 'default')}")
-                cmd = [sys.executable, agent_script, "--config", self.config_path,
-                       "--bus", f"http://127.0.0.1:{SERVER_PORT}", "--session", self.id,
-                       "--role", agent["role"], "--backend", agent["backend"],
-                       "--agent-id", agent["id"], "--workdir", self.workdir]
-                if agent.get("model"): cmd += ["--model", agent["model"]]
-                if agent.get("read_only"): cmd += ["--read-only"]
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                self.agent_procs.append(proc)
-            self.status = "running"
-            self.save_meta()
-            self._broadcast_event("state", self.get_state())
+                agent_script = str(Path(__file__).parent / "council_agent.py")
+                for agent in self.agents:
+                    if agent["id"] not in self.members:
+                        self.join(agent["id"], agent["role"], f"{agent['backend']}/{agent.get('model', 'default')}")
+                    # Use the venv python explicitly (symlink resolution breaks venv detection)
+                    venv_python = str(Path(__file__).parent / ".venv" / "bin" / "python3")
+                    if not Path(venv_python).exists():
+                        venv_python = sys.executable  # fallback to whatever is running
 
-        self.status = "running"
+                    cmd = [venv_python, agent_script, "--config", self.config_path,
+                           "--bus", f"http://{SERVER_HOST}:{SERVER_PORT}", "--session", self.id,
+                           "--role", agent["role"], "--backend", agent["backend"],
+                           "--agent-id", agent["id"], "--workdir", self.workdir]
+                    if agent.get("model"): cmd += ["--model", agent["model"]]
+                    if agent.get("read_only"): cmd += ["--read-only"]
+
+                    # Set environment so the agent process can find venv packages
+                    # The venv uses symlinks, so Python can't auto-detect the venv.
+                    # We explicitly set PYTHONPATH to the venv site-packages.
+                    agent_env = os.environ.copy()
+                    venv_site = str(Path(__file__).parent / ".venv" / "lib" / "python3.14" / "site-packages")
+                    if Path(venv_site).exists():
+                        agent_env["PYTHONPATH"] = venv_site + ":" + agent_env.get("PYTHONPATH", "")
+                        agent_env["VIRTUAL_ENV"] = str(Path(__file__).parent / ".venv")
+
+                    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=agent_env)
+                    self.agent_procs.append(proc)
+                    print(f"[council] Spawned {agent['id']}: {' '.join(cmd[:4])}... PYTHONPATH={agent_env.get('PYTHONPATH','')[:60]}", file=sys.stderr)
+                    # Log agent stderr to a file for debugging
+                    stderr_thread = threading.Thread(
+                        target=self._log_agent_stderr, args=(proc, agent["id"]), daemon=True)
+                    stderr_thread.start()
+                self.status = "running"
+                self.save_meta()
+                self._broadcast_event("state", self.get_state())
+            except Exception as e:
+                print(f"[council] Error starting agents: {e}", file=sys.stderr)
+                self.status = "error"
+                self.save_meta()
+                self._broadcast_event("state", self.get_state())
+
+        self.status = "starting"
         self.save_meta()
-        threading.Thread(target=_spawn, daemon=True).start()
+        threading.Thread(target=_start, daemon=True).start()
+
+    def _log_agent_stderr(self, proc, agent_id):
+        """Log agent stderr to a file for debugging."""
+        log_path = DATA_DIR / f"{self.id}_{agent_id}_stderr.log"
+        try:
+            with open(log_path, "w") as f:
+                while True:
+                    line = proc.stderr.readline()
+                    if not line and proc.poll() is not None:
+                        break
+                    if line:
+                        f.write(line)
+                        f.flush()
+        except Exception:
+            pass
 
     def stop_agents(self):
         for proc in self.agent_procs:
@@ -318,6 +360,7 @@ MANAGER = SessionManager()
 CONFIG_PATH = str(Path(__file__).parent / "council.yaml")
 FRONTEND_DIR = Path(__file__).parent / "dashboard"
 SERVER_PORT = 8080
+SERVER_HOST = "127.0.0.1"
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIR))
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
@@ -572,7 +615,7 @@ def detect_bind_host():
 
 
 def main():
-    global SERVER_PORT
+    global SERVER_PORT, SERVER_HOST
     import argparse
     parser = argparse.ArgumentParser(description="Council Server — Socket.IO")
     parser.add_argument("--port", type=int, default=8080)
@@ -584,6 +627,7 @@ def main():
         bind_host = detect_bind_host()
     else:
         bind_host = args.host
+    SERVER_HOST = bind_host
 
     MANAGER.load_persisted(CONFIG_PATH)
 
