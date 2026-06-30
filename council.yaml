@@ -121,23 +121,6 @@ backends:
         best_for: [coding, review, security, architecture, testing]
     note: "Agentic — can read files, run commands, grep, edit. Uses Ollama models through Claude Code's Anthropic-compatible API. No Anthropic API tokens needed."
 
-  claude-ollama:
-    enabled: false
-    command: "claude"
-    prompt_mode: "argument"
-    read_only_flags: ["-p", "--allowedTools", "Read", "--output-format", "json"]
-    write_flags: ["-p", "--allowedTools", "Read,Edit,Write,Bash", "--output-format", "json"]
-    extra_flags: ["--max-turns", "10"]
-    env:
-      ANTHROPIC_BASE_URL: "http://localhost:11434/v1"  # Ollama OpenAI-compatible endpoint
-    models:
-      - id: glm-5.2
-        name: "GLM 5.2 via Claude Code + Ollama"
-        flag: "--model glm-5.2"
-        best_for: [coding, review, general]
-    auth: "none"
-    notes: "Claude Code CLI as the harness, but model served by Ollama. Set ANTHROPIC_BASE_URL to Ollama endpoint."
-
   # Custom shell backend — escape hatch for any other CLI
   shell:
     enabled: true
@@ -171,56 +154,56 @@ roles:
 
   planner:
     description: "Breaks down tasks into bite-sized implementation steps. Writes structured plans with exact file paths, test targets, and verification steps."
-    default_backend: claude-code
-    default_model: opus
+    default_backend: ollama-claude-code
+    default_model: glm-5.2:cloud
     can_vote: true
     can_propose_vote: true
     read_only: true
 
   architect:
     description: "Designs system-level approach, evaluates architectural tradeoffs, ensures the plan follows repo patterns and industry best practices."
-    default_backend: claude-code
-    default_model: opus
+    default_backend: ollama-claude-code
+    default_model: glm-5.2:cloud
     can_vote: true
     can_propose_vote: true
     read_only: true
 
   coder:
     description: "Implements features following the plan and repo patterns. Writes tests (TDD). Runs tests after each change. Commits when green."
-    default_backend: codex
-    default_model: ""
+    default_backend: ollama-claude-code
+    default_model: glm-5.2:cloud
     can_vote: true
     can_propose_vote: false
     read_only: false
 
   reviewer:
     description: "Critically examines plans, code, and tests. Checks for bugs, security issues, missing edge cases, repo pattern violations, and test coverage gaps. Be specific with file/line references."
-    default_backend: claude-code
-    default_model: sonnet
+    default_backend: ollama-claude-code
+    default_model: glm-5.2:cloud
     can_vote: true
     can_propose_vote: true
     read_only: true
 
   tester:
     description: "Writes and runs tests. Verifies test coverage. Ensures edge cases are covered. Reports test results to the council."
-    default_backend: codex
-    default_model: gpt-5.5
+    default_backend: ollama-claude-code
+    default_model: glm-5.2:cloud
     can_vote: true
     can_propose_vote: false
     read_only: false
 
   researcher:
     description: "Explores the repository, extracts patterns, naming conventions, build commands, test frameworks. Builds a context dossier for the council."
-    default_backend: claude-code
-    default_model: sonnet
+    default_backend: ollama-claude-code
+    default_model: glm-5.2:cloud
     can_vote: false
     can_propose_vote: false
     read_only: true
 
   security:
     description: "Security-focused review of code and architecture. Checks for injection vulnerabilities, auth flaws, secrets in code, unsafe deserialization."
-    default_backend: claude-code
-    default_model: opus
+    default_backend: ollama-claude-code
+    default_model: glm-5.2:cloud
     can_vote: true
     can_propose_vote: true
     read_only: true
