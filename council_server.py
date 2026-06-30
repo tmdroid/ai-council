@@ -63,6 +63,10 @@ class SessionRoom:
 
     def join(self, agent_id, role, model=""):
         with self.lock:
+            if agent_id in self.members:
+                # Already a member — update info but don't re-announce
+                self.members[agent_id] = {"role": role, "model": model, "joined_at": time.time()}
+                return
             self.members[agent_id] = {"role": role, "model": model, "joined_at": time.time()}
             self._add_system(f"[{role}] joined the council", agent_id, role)
 
@@ -363,6 +367,15 @@ def api_join(sid):
     body = request.get_json()
     room.join(body.get("agent_id", str(uuid.uuid4())[:8]), body.get("role", "observer"), body.get("model", ""))
     return jsonify({"status": "joined", "room": room.get_state()})
+
+
+@app.route("/api/sessions/<sid>/leave", methods=["POST"])
+def api_leave(sid):
+    room = MANAGER.get(sid)
+    if not room: return jsonify({"error": "not_found"}), 404
+    body = request.get_json()
+    room.leave(body.get("agent_id", ""))
+    return jsonify({"status": "left"})
 
 
 @app.route("/api/sessions/<sid>/message", methods=["POST"])

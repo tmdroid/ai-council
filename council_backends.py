@@ -134,9 +134,28 @@ class Backend:
                     capture_output=True, text=True,
                     timeout=timeout, env=env
                 )
+                output = result.stdout
+                # Clean Ollama output: remove thinking blocks, progress spinners
+                if self.name == "ollama":
+                    lines = output.split("\n")
+                    cleaned = []
+                    in_thinking = False
+                    for line in lines:
+                        stripped = line.strip()
+                        # Skip progress spinner lines (contain spinner characters)
+                        if any(c in stripped for c in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"):
+                            continue
+                        # Skip "Thinking..." and "...done thinking." markers
+                        if stripped == "Thinking..." or stripped.startswith("...done thinking"):
+                            in_thinking = not stripped.startswith("...done thinking")
+                            continue
+                        if in_thinking:
+                            continue
+                        cleaned.append(line)
+                    output = "\n".join(cleaned).strip()
                 return BackendResult(
                     success=result.returncode == 0,
-                    output=result.stdout,
+                    output=output,
                     error=result.stderr,
                     exit_code=result.returncode
                 )

@@ -315,7 +315,10 @@ class BusClient:
         return self._request("POST", "/join", {"agent_id": agent_id, "role": role, "model": model})
 
     def leave(self, agent_id):
-        return self._request("POST", "/leave", {"agent_id": agent_id})
+        try:
+            return self._request("POST", "/leave", {"agent_id": agent_id})
+        except Exception:
+            return {"status": "left"}
 
     def post_message(self, agent_id, content, msg_type="message"):
         return self._request("POST", "/message", {"agent_id": agent_id, "content": content, "type": msg_type})
