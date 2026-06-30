@@ -496,7 +496,7 @@ def create_agent(
     - anything else -> GenericCLIAgent (built from config)
     """
     # Import here to avoid circular imports if implementations import from cli_agent
-    from cli_agents import OllamaCLIAgent, ClaudeCLIAgent, CodexCLIAgent, GenericCLIAgent
+    from cli_agents import OllamaCLIAgent, ClaudeCLIAgent, CodexCLIAgent, GenericCLIAgent, OllamaClaudeCodeAgent
 
     if backend_name == "ollama":
         return OllamaCLIAgent(
@@ -510,6 +510,11 @@ def create_agent(
         )
     elif backend_name == "codex":
         return CodexCLIAgent(
+            name=agent_id, model=model_id, workdir=workdir,
+            on_status_change=on_status_change,
+        )
+    elif backend_name == "ollama-claude-code":
+        return OllamaClaudeCodeAgent(
             name=agent_id, model=model_id, workdir=workdir,
             on_status_change=on_status_change,
         )

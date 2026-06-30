@@ -84,14 +84,14 @@ backends:
         best_for: [coding, review]
     auth: "oauth"
     notes: "Requires GitHub Copilot CLI. Can use --agent flag for custom agents."
-
   ollama:
     enabled: true                      # Ollama is installed
     command: "ollama"
     prompt_mode: "stdin"               # echo 'prompt' | ollama run model
     read_only_flags: ["run"]
     write_flags: ["run"]
-    extra_flags: []
+    auth: "none"
+    env: {}
     models:
       - id: glm-5.2:cloud
         name: "GLM 5.2 Cloud"
@@ -100,34 +100,27 @@ backends:
       - id: glm-5.2
         name: "GLM 5.2 (local)"
         flag: "glm-5.2"
-        best_for: [coding, general, review]
-      - id: llama3.3
-        name: "Llama 3.3 (Ollama)"
-        flag: "llama3.3"
-        best_for: [general, coding]
-      - id: qwen3-32b
-        name: "Qwen 3 32B (Ollama)"
-        flag: "qwen3:32b"
         best_for: [coding, general]
-    auth: "none"
-    notes: "Local or Ollama Cloud models. No API key needed for local."
+    note: "Non-agentic. Text in, text out. Cannot read files or run commands."
 
-  opencode:
-    enabled: false
-    command: "opencode"
-    prompt_mode: "argument"             # opencode run 'prompt'
-    read_only_flags: ["run"]
-    write_flags: ["run"]
-    extra_flags: []
+  ollama-claude-code:
+    enabled: true                      # Claude Code + Ollama = agentic, no API tokens
+    command: "claude"
+    prompt_mode: "tmux"                # Interactive mode via tmux (or oneshot with -p)
+    read_only_flags: ["--model"]
+    write_flags: ["--model"]
+    auth: "env"
+    env:
+      ANTHROPIC_AUTH_TOKEN: "ollama"
+      ANTHROPIC_API_KEY: ""
+      ANTHROPIC_BASE_URL: "http://localhost:11434"
     models:
-      - id: default
-        name: "OpenCode Default"
-        flag: ""
-        best_for: [coding, review]
-    auth: "oauth"                       # opencode auth login
+      - id: glm-5.2:cloud
+        name: "GLM 5.2 Cloud (via Claude Code)"
+        flag: "glm-5.2:cloud"
+        best_for: [coding, review, security, architecture, testing]
+    note: "Agentic — can read files, run commands, grep, edit. Uses Ollama models through Claude Code's Anthropic-compatible API. No Anthropic API tokens needed."
 
-  # Example: Claude Code running an Ollama-served model
-  # This uses the claude-code CLI but routes to a local Ollama model
   claude-ollama:
     enabled: false
     command: "claude"
