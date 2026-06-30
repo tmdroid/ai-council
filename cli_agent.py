@@ -1,34 +1,32 @@
 #!/usr/bin/env python3
 """
-CLI Agent Interface — Manages the lifecycle of an interactive coding CLI.
+CLI Agent Interface — Abstract base and concrete implementations.
 
-A clean abstraction layer between the council bus and the actual CLI tool
-(Claude Code, Codex, Ollama, etc.). This module knows nothing about the
-council, sessions, votes, or the bus. It only knows how to:
+A clean abstraction layer between the council bus and coding CLIs. Each
+implementation manages the lifecycle of a specific CLI tool (Claude Code,
+Codex, Ollama, etc.) in a persistent tmux session.
 
-1. Start a CLI in a tmux session
-2. Send text to it
-3. Capture its output
-4. Detect when it's ready for more input
-5. Report its status
-6. Shut it down cleanly
+The base class defines the interface:
+    - start(): Launch the CLI
+    - stop(): Kill the CLI
+    - send(prompt): Send a message and get a response (context preserved)
+    - send_shell(command): Run a shell command in the same session
+    - is_alive(): Check if the CLI is running
+    - get_status(): Return current status
+    - capture(): Get raw pane content
+
+Concrete implementations:
+    - OllamaCLIAgent: ollama run <model> (interactive, free/local)
+    - ClaudeCLIAgent: claude --model <model> (interactive, uses subscription)
+    - CodexCLIAgent: codex --model <model> (interactive, uses subscription)
+    - GenericCLIAgent: Any CLI with custom command and prompt patterns
 
 Usage:
-    from cli_agent import CLIAgent
+    from cli_agent import OllamaCLIAgent
 
-    agent = CLIAgent(
-        name="reviewer-01",
-        command="ollama run glm-5.2:cloud",
-        workdir="/home/user/myproject",
-    )
+    agent = OllamaCLIAgent(name="reviewer-01", model="glm-5.2:cloud", workdir="/repo")
     agent.start()
-
     response = agent.send("Review src/auth.py for security issues")
-    print(response)
-
-    response = agent.send("Now check the tests for coverage gaps")
-    print(response)  # context preserved from previous turn
-
     agent.stop()
 
 The agent keeps context across turns because the CLI runs in a persistent
@@ -40,97 +38,80 @@ import time
 import threading
 import re
 import os
+from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Optional, Callable
 
 
 class AgentStatus(Enum):
     """Lifecycle states of a CLI agent."""
-    CREATED = "created"       # Object exists but CLI not started
-    STARTING = "starting"     # CLI is launching in tmux
-    READY = "ready"           # CLI is waiting for input
-    THINKING = "thinking"     # CLI is processing a prompt
-    ERROR = "error"           # CLI crashed or returned an error
-    STOPPED = "stopped"       # CLI was stopped by the user
+    CREATED = "created"
+    STARTING = "starting"
+    READY = "ready"
+    THINKING = "thinking"
+    ERROR = "error"
+    STOPPED = "stopped"
 
 
-class CLIAgent:
+class CLIAgent(ABC):
     """
-    Manages a single interactive coding CLI in a tmux session.
+    Abstract base class for managing a single interactive coding CLI.
 
-    The CLI runs persistently — it keeps its conversation context across
-    multiple send() calls. This is the key advantage over one-shot mode:
-    the agent remembers what was said and what files it already read.
+    The CLI runs persistently in a tmux session — it keeps conversation
+    context across multiple send() calls. This is the key advantage over
+    one-shot mode: the agent remembers what was said and what files it
+    already read.
 
-    Attributes:
-        name: Unique identifier for this agent (used as tmux session name)
-        command: The shell command that starts the CLI
-        workdir: Working directory for the CLI
-        status: Current AgentStatus
-        on_status_change: Optional callback called when status changes
+    Subclasses must implement:
+        - _build_command(): Return the shell command to start the CLI
+        - _get_prompt_patterns(): Return regex patterns for the CLI's ready prompt
+        - _get_startup_wait(): Return seconds to wait after starting
+
+    Subclasses may override:
+        - _clean_output(): Backend-specific output cleaning
+        - _get_startup_wait(): Different startup times per CLI
     """
 
     def __init__(
         self,
         name: str,
-        command: str,
         workdir: str = ".",
         width: int = 200,
         height: int = 60,
-        prompt_patterns: Optional[list[str]] = None,
-        startup_wait: float = 5.0,
+        startup_wait: Optional[float] = None,
         response_timeout: int = 300,
         on_status_change: Optional[Callable[[AgentStatus, AgentStatus], None]] = None,
     ):
-        """
-        Args:
-            name: Unique name (becomes the tmux session name, prefixed with "cli-")
-            command: Shell command to start the CLI (e.g., "ollama run glm-5.2:cloud")
-            workdir: Directory where the CLI runs
-            width/height: tmux pane dimensions (wide enough for code output)
-            prompt_patterns: List of regex patterns that match the CLI's ready prompt.
-                             If None, auto-detected based on the command.
-            startup_wait: Seconds to wait after starting the CLI before first send
-            response_timeout: Default timeout for send() in seconds
-            on_status_change: Callback(old_status, new_status) when status transitions
-        """
         self.name = name
         self.tmux_session = f"cli-{name}"
-        self.command = command
         self.workdir = workdir
         self.width = width
         self.height = height
-        self.startup_wait = startup_wait
         self.response_timeout = response_timeout
         self.on_status_change = on_status_change
         self.status = AgentStatus.CREATED
         self._last_capture = ""
-        self._last_capture_time = 0
-        self._pane_history = []  # lines we've already processed
 
-        # Auto-detect prompt patterns based on the command
-        if prompt_patterns is None:
-            self.prompt_patterns = self._detect_prompt_patterns(command)
-        else:
-            self.prompt_patterns = prompt_patterns
+        self.prompt_patterns = self._get_prompt_patterns()
+        self.startup_wait = startup_wait if startup_wait is not None else self._get_startup_wait()
 
-    def _detect_prompt_patterns(self, command: str) -> list[str]:
-        """Auto-detect what the CLI's ready-for-input prompt looks like."""
-        cmd_lower = command.lower()
-        if "ollama" in cmd_lower:
-            # Ollama interactive: ">>> Send a message (/? for help)"
-            return [r">>>\s+Send a message", r">>>\s*$"]
-        elif "claude" in cmd_lower:
-            # Claude Code: shows "❯" or ">" when ready
-            return [r"❯\s*$", r">\s*$"]
-        elif "codex" in cmd_lower:
-            return [r"❯\s*$", r">\s*$"]
-        elif "opencode" in cmd_lower:
-            return [r"❯\s*$", r">\s*$"]
-        elif "copilot" in cmd_lower:
-            return [r"❯\s*$", r">\s*$"]
-        else:
-            return [r"\$\s*$", r"#\s*$", r">\s*$"]
+    # --- Abstract methods ---
+
+    @abstractmethod
+    def _build_command(self) -> str:
+        """Return the shell command to start the CLI in interactive mode."""
+        ...
+
+    @abstractmethod
+    def _get_prompt_patterns(self) -> list[str]:
+        """Return regex patterns that match the CLI's ready-for-input prompt."""
+        ...
+
+    def _get_startup_wait(self) -> float:
+        """Return seconds to wait after starting the CLI before first send."""
+        return 5.0
+
+    # --- Concrete methods (shared by all implementations) ---
 
     def _set_status(self, new_status: AgentStatus):
         """Update status and fire callback."""
@@ -176,10 +157,11 @@ class CLIAgent:
                 )
                 time.sleep(0.5)
 
-            # Start the CLI
+            # Start the CLI (build command from subclass)
+            command = self._build_command()
             subprocess.run(
                 ["tmux", "send-keys", "-t", self.tmux_session,
-                 self.command, "Enter"],
+                 command, "Enter"],
                 capture_output=True, check=True, timeout=5
             )
 
@@ -193,15 +175,12 @@ class CLIAgent:
 
             # Capture initial state
             self._last_capture = self._capture_pane()
-            self._pane_history = self._last_capture.strip().split("\n")
 
             self._set_status(AgentStatus.READY)
             return True
 
-        except Exception as e:
+        except Exception:
             self._set_status(AgentStatus.ERROR)
-            if self.on_status_change:
-                self.on_status_change(self.status, self.status)
             return False
 
     def stop(self):
@@ -492,14 +471,14 @@ class CLIAgent:
             pass
 
     def __repr__(self):
-        return f"CLIAgent(name={self.name!r}, command={self.command!r}, status={self.status.value!r})"
+        return f"{self.__class__.__name__}(name={self.name!r}, status={self.status.value!r})"
 
 
 # =============================================================================
-# Factory function — build a CLIAgent from council.yaml backend config
+# Factory — create the right agent type from config
 # =============================================================================
 
-def create_agent_from_config(
+def create_agent(
     agent_id: str,
     backend_name: str,
     model_id: str,
@@ -510,51 +489,34 @@ def create_agent_from_config(
     """
     Create a CLIAgent from the council.yaml backend configuration.
 
-    Args:
-        agent_id: Unique agent identifier
-        backend_name: Backend name from council.yaml (e.g., "ollama", "claude-code")
-        model_id: Model ID (e.g., "glm-5.2:cloud", "opus")
-        config: The full council.yaml config dict
-        workdir: Working directory
-        on_status_change: Status change callback
-
-    Returns:
-        A CLIAgent configured for the specified backend and model.
+    Returns the appropriate concrete implementation based on backend_name:
+    - ollama -> OllamaCLIAgent
+    - claude-code -> ClaudeCLIAgent
+    - codex -> CodexCLIAgent
+    - anything else -> GenericCLIAgent (built from config)
     """
-    backends = config.get("backends", {})
-    backend = backends.get(backend_name, {})
-    command_base = backend.get("command", backend_name)
+    # Import here to avoid circular imports if implementations import from cli_agent
+    from cli_agents import OllamaCLIAgent, ClaudeCLIAgent, CodexCLIAgent, GenericCLIAgent
 
-    # Build the interactive command for each backend type
     if backend_name == "ollama":
-        command = f"{command_base} run {model_id}"
-        prompt_patterns = [r">>>\s*$", r"\$\s*$"]
-        startup_wait = 3.0
-
+        return OllamaCLIAgent(
+            name=agent_id, model=model_id, workdir=workdir,
+            on_status_change=on_status_change,
+        )
     elif backend_name == "claude-code":
-        model_flag = f"--model {model_id}" if model_id else ""
-        command = f"{command_base} {model_flag}".strip()
-        prompt_patterns = [r"❯\s*$", r">\s*$"]
-        startup_wait = 10.0  # Claude Code takes longer to start
-
+        return ClaudeCLIAgent(
+            name=agent_id, model=model_id, workdir=workdir,
+            on_status_change=on_status_change,
+        )
     elif backend_name == "codex":
-        model_flag = f"--model {model_id}" if model_id else ""
-        command = f"{command_base} {model_flag}".strip()
-        prompt_patterns = [r"❯\s*$", r">\s*$"]
-        startup_wait = 8.0
-
-    elif backend_name == "opencode":
-        command = f"{command_base}"
-        prompt_patterns = [r"❯\s*$", r">\s*$"]
-        startup_wait = 5.0
-
-    elif backend_name == "copilot":
-        command = f"{command_base}"
-        prompt_patterns = [r"❯\s*$", r">\s*$"]
-        startup_wait = 5.0
-
+        return CodexCLIAgent(
+            name=agent_id, model=model_id, workdir=workdir,
+            on_status_change=on_status_change,
+        )
     else:
-        # Generic: use the command with model flag if available
+        # Generic fallback — build command from config
+        backend = config.get("backends", {}).get(backend_name, {})
+        command_base = backend.get("command", backend_name)
         models = backend.get("models", [])
         model_flag = ""
         for m in models:
@@ -562,14 +524,9 @@ def create_agent_from_config(
                 model_flag = m["flag"]
                 break
         command = f"{command_base} {model_flag}".strip()
-        prompt_patterns = [r"\$\s*$", r">\s*$"]
-        startup_wait = 5.0
-
-    return CLIAgent(
-        name=agent_id,
-        command=command,
-        workdir=workdir,
-        prompt_patterns=prompt_patterns,
-        startup_wait=startup_wait,
-        on_status_change=on_status_change,
-    )
+        return GenericCLIAgent(
+            name=agent_id, command=command,
+            prompt_patterns=[r"\$\s*$", r">\s*$"],
+            workdir=workdir,
+            on_status_change=on_status_change,
+        )
