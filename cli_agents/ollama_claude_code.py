@@ -34,12 +34,13 @@ class OllamaClaudeCodeAgent(CLIAgent):
     Uses Claude Code's agentic tools (Read, Bash, Grep, Glob, Edit) with
     Ollama providing the model intelligence. No Anthropic API tokens needed.
 
-    The agent can:
-    - Read files autonomously (Read tool)
-    - Run shell commands (Bash tool)
-    - Search codebase (Grep/Glob tools)
-    - Edit files (Edit tool)
-    - Use subagents for parallel work
+    Context is preserved across send() calls using --continue flag:
+    First call: claude --model X -p "prompt"
+    Subsequent: claude --model X --continue -p "prompt"
+
+    This gives us the agentic capabilities of Claude Code (file reading,
+    command execution, code search) with Ollama models as the brain, and
+    the conversation context persists between rounds.
 
     Billing: Ollama cloud models are pay-per-use (not subscription).
              Local Ollama models are free.
@@ -58,20 +59,21 @@ class OllamaClaudeCodeAgent(CLIAgent):
         self.model = model
         self.ollama_host = ollama_host
         self.skip_permissions = skip_permissions
+        self._first_call = True
         super().__init__(name=name, workdir=workdir, **kwargs)
 
     def _build_command(self) -> str:
+        # Not used for tmux — we use subprocess directly
         parts = ["claude", "--model", self.model]
         if self.skip_permissions:
             parts.append("--dangerously-skip-permissions")
         return " ".join(parts)
 
     def _get_prompt_patterns(self) -> list[str]:
-        # Claude Code interactive: "❯" or ">" when ready
         return [r"❯\s*$", r">\s*$"]
 
     def _get_startup_wait(self) -> float:
-        return 8.0  # Claude Code + Ollama connection takes a moment
+        return 2.0  # No tmux startup needed
 
     def _build_env(self) -> dict:
         """Build environment variables for Ollama + Claude Code."""
@@ -79,99 +81,54 @@ class OllamaClaudeCodeAgent(CLIAgent):
         env["ANTHROPIC_AUTH_TOKEN"] = "ollama"
         env["ANTHROPIC_API_KEY"] = ""
         env["ANTHROPIC_BASE_URL"] = self.ollama_host
-        # Ensure claude is in PATH
         local_bin = os.path.expanduser("~/.local/bin")
         env["PATH"] = local_bin + ":" + env.get("PATH", "")
         return env
 
     def start(self) -> bool:
-        """Start Claude Code with Ollama env vars in a tmux session."""
-        import subprocess, time
+        """No tmux session needed — we use subprocess -p mode with --continue."""
+        self._set_status(AgentStatus.READY)
+        self._first_call = True
+        return True
 
-        self._set_status(AgentStatus.STARTING)
-        self._kill_tmux()
+    def send(self, prompt: str, timeout: int = 300) -> str:
+        """Send a prompt to Claude Code and get a response.
 
-        try:
-            subprocess.run(
-                ["tmux", "new-session", "-d", "-s", self.tmux_session,
-                 "-x", str(self.width), "-y", str(self.height)],
-                capture_output=True, check=True, timeout=10
-            )
-
-            # Set working directory
-            if self.workdir and os.path.isdir(self.workdir):
-                subprocess.run(
-                    ["tmux", "send-keys", "-t", self.tmux_session,
-                     f"cd {self.workdir}", "Enter"],
-                    capture_output=True, check=True, timeout=5
-                )
-                time.sleep(0.5)
-
-            # Set env vars and start Claude Code
-            env = self._build_env()
-            env_prefix = (
-                f"ANTHROPIC_AUTH_TOKEN={env['ANTHROPIC_AUTH_TOKEN']} "
-                f"ANTHROPIC_API_KEY={env['ANTHROPIC_API_KEY']} "
-                f"ANTHROPIC_BASE_URL={env['ANTHROPIC_BASE_URL']} "
-                f"PATH={env['PATH']} "
-            )
-
-            command = env_prefix + self._build_command()
-            subprocess.run(
-                ["tmux", "send-keys", "-t", self.tmux_session,
-                 command, "Enter"],
-                capture_output=True, check=True, timeout=5
-            )
-
-            time.sleep(self.startup_wait)
-
-            if not self._tmux_alive():
-                self._set_status(AgentStatus.ERROR)
-                return False
-
-            self._last_capture = self._capture_pane()
-            self._set_status(AgentStatus.READY)
-            return True
-
-        except Exception:
-            self._set_status(AgentStatus.ERROR)
-            return False
-
-    def send_oneshot(self, prompt: str, timeout: int = 300) -> str:
-        """Run Claude Code in one-shot mode (-p flag) with Ollama.
-
-        This is simpler than tmux for single-turn tasks. The agent reads files,
-        runs commands, and returns a text response.
+        Uses -p (print) mode with --continue for context preservation.
+        First call starts a new session; subsequent calls continue it.
         """
         import subprocess
+
+        self._set_status(AgentStatus.THINKING)
 
         env = self._build_env()
         cmd = ["claude", "--model", self.model, "-p"]
         if self.skip_permissions:
             cmd.append("--dangerously-skip-permissions")
+        if not self._first_call:
+            cmd.append("--continue")
         cmd.append(prompt)
+        self._first_call = False
 
         try:
             result = subprocess.run(
                 cmd, cwd=self.workdir, capture_output=True, text=True,
                 timeout=timeout, env=env
             )
-            return result.stdout.strip()
+            self._set_status(AgentStatus.READY)
+            output = result.stdout.strip()
+            return self._clean_output(output)
         except subprocess.TimeoutExpired:
+            self._set_status(AgentStatus.ERROR)
             return "<error>Timeout</error>"
         except Exception as e:
+            self._set_status(AgentStatus.ERROR)
             return f"<error>{e}</error>"
 
-    def _clean_output(self, text: str) -> str:
-        """Claude Code output is clean — minimal processing needed."""
-        lines = text.split("\n")
-        cleaned = []
-        for line in lines:
-            stripped = line.strip()
-            # Skip prompt indicators
-            if stripped.endswith("❯") and len(stripped) < 30:
-                continue
-            if stripped == "" and len(cleaned) > 0 and cleaned[-1].strip() == "":
-                continue
-            cleaned.append(line)
-        return "\n".join(cleaned).strip()
+    def stop(self):
+        """Nothing to stop — no persistent process."""
+        self._set_status(AgentStatus.STOPPED)
+
+    def is_alive(self) -> bool:
+        """Always alive — we spawn a new process per call."""
+        return self.status not in (AgentStatus.STOPPED, AgentStatus.ERROR)

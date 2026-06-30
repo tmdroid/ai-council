@@ -1,0 +1,116 @@
+{
+  "agents": [
+    {
+      "backend": "ollama-claude-code",
+      "id": "reviewer-01",
+      "model": "glm-5.2:cloud",
+      "read_only": true,
+      "role": "reviewer"
+    },
+    {
+      "backend": "ollama-claude-code",
+      "id": "security-01",
+      "model": "glm-5.2:cloud",
+      "read_only": true,
+      "role": "security"
+    }
+  ],
+  "consensus": "majority",
+  "created_at": 1782849810.9925127,
+  "id": "50250bfb",
+  "members": {
+    "human": {
+      "joined_at": 1782849810.9933624,
+      "model": "human",
+      "role": "supervisor"
+    }
+  },
+  "message_count": 8,
+  "messages": [
+    {
+      "agent_id": "human",
+      "content": "[supervisor] joined the council",
+      "id": "34529cbc-48a6-45d5-a67b-492403e59760",
+      "role": "supervisor",
+      "timestamp": 1782849810.9933887,
+      "type": "system"
+    },
+    {
+      "agent_id": "human",
+      "content": "COUNCIL TASK: Deep review of the imnuri-azsmr hymns app. Explore the codebase autonomously \u2014 read files, grep for patterns, run commands. Identify vulnerabilities, defects, and improvements. Produce an agreed list of actionable items.\n\nWorking directory: /home/hermes/imnuri-azsmr\nConsensus: majority\n\nSession created. The supervisor will assess the task and compose a team. Click 'Start Agents' when ready.",
+      "id": "aaea0018-e11f-4d73-83e2-fea2ce370296",
+      "role": "supervisor",
+      "timestamp": 1782849810.9943912,
+      "type": "task"
+    },
+    {
+      "agent_id": "reviewer-01",
+      "content": "[reviewer] joined the council",
+      "id": "70b6bc84-fd18-491f-bbfe-3a03e0fbf8cf",
+      "role": "reviewer",
+      "timestamp": 1782849811.0759099,
+      "type": "system"
+    },
+    {
+      "agent_id": "security-01",
+      "content": "[security] joined the council",
+      "id": "372f1968-13ec-4226-a302-78408afcc54b",
+      "role": "security",
+      "timestamp": 1782849811.0875924,
+      "type": "system"
+    },
+    {
+      "agent_id": "security-01",
+      "content": "I've completed my security sweep of the codebase. Here are my findings.\n\n---\n\n## Security Review \u2014 imnuri-azsmr\n\n### Verified SAFE (no action)\n- **SQL injection**: All SQLDelight queries use `?` placeholders (`Hymn.sq`, `Category.sq`). No string-concatenated SQL. \u2705\n- **URL/HTTP injection**: `HymnApi.kt` builds URLs from a constant `BASE_URL` + an enum-derived `langCode` (`when` over `HymnLanguage`) + zero-padded `Int`. No user-controlled input reaches the URL. \u2705\n- **Deserialization**: Only `kotlinx.serialization` (`@Serializable` DTOs). `ignoreUnknownKeys/isLenient` on remote JSON \u2014 memory-safe, no code-execution path. No Java `ObjectInputStream` anywhere. \u2705\n- **openURL / intent redirection**: `onOpenWebsite` always receives hardcoded `https://azsmr.ro` or `mailto:$developerEmail` (`DefaultAboutComponent.kt:10,20,24`). Not attacker-controllable. \u2705\n- **Exported components**: Only the launcher `MainActivity` is `exported=\"true\"`. No content/file providers, no deep-link intent filters. \u2705\n- **Network config**: `cleartextTrafficPermitted=\"false\"` globally, localhost-only exception (`network_security_config.xml`). \u2705\n- **`google-services.json`**: NOT committed to git (gitignored, loaded at build time). \u2705\n- **Signing passwords**: `composeApp/build.gradle.kts:81-83` reads from env vars only; no hardcoded passwords in Gradle. \u2705\n\n### Findings requiring action\n\n**S1 \u2014 MEDIUM: Android signing keystore committed to git**\n`keystoreImnuri900.jks` is tracked in git (`.gitignore` explicitly says \"keep keystore\"). The key alias is hardcoded as `\"imnuri900\"` in `build-android.sh:60`. If the repo is ever exposed (or a contributor's machine compromised), the signing material is available; combined with a leaked password (1Password), an attacker can sign malicious APKs that update the legitimate app. *Mitigation*: remove from git history (`git filter-repo`), store only in 1Password/CI secrets, and **rotate the keystore** if the repo was ever public. Note: CLAUDE.md documents this as intentional \u2014 I'm flagging it so the council can decide explicitly.\n\n**S2 \u2014 LOW/MEDIUM: Crashlytics enabled unconditionally + no analytics consent**\n`ImnuriApplication.kt:26` calls `setCrashlyticsCollectionEnabled(true)` \u2014 the comment says \"release builds only\" but it is NOT gated by `BuildConfig.DEBUG`, so crash data is collected in debug builds too. Firebase Analytics auto-initializes and `DefaultRootComponent` sets user properties (`hymn_language`, `app_language`, `theme`, `dark_mode`, `app_version`) and logs `hymn_number`/`category_name`. With EU users (RO/IT/DE), unconsented analytics is a GDPR compliance gap. *Mitigation*: gate Crashlytics behind `!BuildConfig.DEBUG`, add an opt-in consent preference in Settings, and disable collection until consent.\n\n**S3 \u2014 LOW: `android:allowBackup` unset \u2192 defaults to true**\n`composeApp/.../AndroidManifest.xml` doesn't set `allowBackup`, so the SQLite DB (favorites) and preferences are included in Auto Backup / `adb backup`. Low-sensitivity data, but a hardening gap. *Mitigation*: `android:allowBackup=\"false\"` or a `<full-backup-content>` ruleset excluding `imnuri.db`.\n\n**S4 \u2014 LOW: Dead legacy `app/` module still in the repo**\n`app/src/main/` contains a Java/Realm codebase (with `READ/WRITE_EXTERNAL_STORAGE`, `ACCESS_WIFI_STATE` permissions in its manifest). It is NOT in `settings.gradle.kts`, so it's not built into the APK \u2014 no active vuln, but it's stale attack-surface and confusion for tooling/future contributors. *Mitigation*: delete `app/` from the migration branch (archive to a separate branch if needed).\n\n### Proposed action items for the council",
+      "id": "09db60a3-74a2-4851-8c19-7dd22bbbfae9",
+      "role": "security",
+      "timestamp": 1782849937.6023452,
+      "type": "message"
+    },
+    {
+      "agent_id": "security-01",
+      "content": "[security] left the council",
+      "id": "b38717e5-42ab-4898-a284-6d59c1dca5a5",
+      "role": "security",
+      "timestamp": 1782849937.6513755,
+      "type": "system"
+    },
+    {
+      "agent_id": "reviewer-01",
+      "content": "I've completed my review pass. Here are my findings, ranked by severity, with file:line references.\n\n---\n\n## REVIEWER-01 \u2014 Round 1 findings\n\n### \ud83d\udd34 High severity\n\n**R1. Signing keystore committed to git** *(security \u2014 handing to @security)*\n`keystoreImnuri900.jks` is tracked in the repo (`git ls-files` confirms it; `.gitignore` comment says \"keep keystore\"). Anyone with read access can extract it. `build-android.sh` shows the keystore password is loaded from 1Password (and a token file at `$HOME/.config/.op_service_token`). If that password ever leaks, an attacker can sign malicious updates accepted as the original developer. **Action:** remove from git history, rotate the keystore, keep signing material out of the repo entirely.\n\n**R2. English hymns sync Romanian data** \u2014 `shared/data/src/commonMain/kotlin/ml/dannyb/imnuriazsmr/data/network/HymnApi.kt:14-18`\n```kotlin\nval langCode = when (language) {\n    HymnLanguage.ITALIAN -> \"it\"\n    HymnLanguage.GERMAN -> \"de\"\n    else -> \"ro\"   // ENGLISH falls here \u2192 fetches json-ro\n}\n```\n`HymnLanguage.ENGLISH` (HymnLanguage.kt:5) maps to `\"ro\"`, so English users get Romanian hymn content. Either add a `json-en` endpoint or make ENGLISH explicit (and decide the intended behavior).\n\n**R3. Media CDN hardcoded to Romanian for all languages** \u2014 `HymnApi.kt:11-12`\n`SOUND_CDN = \".../mp3/ro/\"` and `IMAGE_CDN = \".../png/ro/\"` are constants; `downloadMp3`/`downloadSheet` take only a hymn number, no language. Italian/German hymns download Romanian audio and sheet images. `MediaRepositoryImpl.downloadMp3/downloadSheet` propagate this. **Action:** parameterize the CDN by language or document that media is Romanian-only.\n\n### \ud83d\udfe0 Medium severity\n\n**R4. Language sync failure leaves `isSyncing=true` forever + no rollback** \u2014 `DefaultSettingsComponent.kt:58-72`\n`setHymnsLanguage` is called *before* `syncHymnsUseCase`, and there's no `try/finally`. If sync throws: (a) `isSyncing` never resets \u2192 infinite spinner; (b) the language preference is now the new language while the DB still holds the old content \u2192 mismatch. **Action:** wrap in try/finally for the flag, and either sync-first-then-set-pref or roll back the pref on failure; surface the error to the UI.\n\n**R5. Stale cache-size display after clear/download** \u2014 `MediaRepositoryImpl.kt:73-79` + `DefaultSettingsComponent.kt:39-55`\n`getCachedMp3Size`/`getCachedSheetSize` are `flow { emit(...) }` that emit once and complete. The `combine` in Settings init therefore never refreshes; after `clearCache()` the Settings screen still shows the old size. **Action:** make these re-emit on change (e.g. trigger flow, or re-query after clearCache).\n\n**R6. Empty-but-valid sync response wipes the database** \u2014 `HymnRepositoryImpl.kt:62-86`\nThe bundled fallback fires only on `Exception`. A `200` with an empty/`[]` body (or a parse yielding zero hymns) is treated as success \u2192 `deleteAllHymns()` + `deleteAll()` run, wiping everything, then `setDatabasePopulated(true)` is set (SyncHymnsUseCase.kt:13). **Action:** guard `if (response.hymns.isEmpty()) throw ...` so the fallback engages and the flag isn't set on empty.\n\n**R7. No analytics/privacy consent for EU users** *(compliance \u2014 for @security)*\n`AnalyticsModule.kt` registers Firebase Analytics + Crashlytics unconditionally on Android. `DefaultRootComponent.init` logs `hymn_viewed`, `category_selected`, `language_changed`, `app_started`, plus user properties (`hymn_language`, `theme`, `app_version`\u2026). No consent dialog exists. Romanian/EU users \u2192 GDPR requires opt-in before non-essential collection. **Action:** gate collection behind a consent preference; provide a disable toggle in Settings.\n\n### \ud83d\udfe1 Low severity\n\n**R8. Read-modify-write races on preferences** \u2014 `PreferencesRepositoryImpl.kt:101-116`\n`incrementTimesStarted` and `addRecentlyViewedHymn` do non-atomic read-then-write on `settings`. Concurrent calls can lose updates. Use a `Mutex` or atomic write.\n\n**R9. Silent playback failure** \u2014 `MediaRepositoryImpl.kt:60-68`\n`playMp3` catches every exception in an empty block. Corrupt/unreadable audio fails with zero user feedback. Surface the error to the UI.\n\n**R10. `println` as production error logging** \u2014 `DefaultRootComponent.kt:115,128`; `PlatformFileStorage.ios.kt:33,43,57,62,90`; `PlatformMediaPlayer.ios.kt:20,33`\nSync/init/media failures are `println`'d instead of routed to Crashlytics/analytics, so failures are invisible to monitoring. Route through the `AnalyticsService`/Crashlytics.\n\n**R11. 24 junk zero-byte files in repo root** \u2014 untracked files named `:`, `-bash:`, `===`, `[reviewer]`, `[supervisor]`, `Consensus:`, `Working:`, etc. (created today). Almost certainly a botched shell redirection. **Action:** delete them; the filenames will break some tools and clutter `git status`.\n\n**R12. CLAUDE.md dependency table is stale** \u2014 lists Kotlin 2.1.20 / Ktor 3.1.2 / CMP 1.10.0 / AGP 8.10.0, but commits `22639c1`/`7b991ab` bumped to Kotlin 2.4.0 / Ktor 3.5.1 / CMP 1.11.1 / AGP 8.13.2. The \"Ktor 3.4.0 needs Kotlin 2.3.0\" gotcha is now moot. Update docs to match.\n\n### Notable non-issues (verified, no action)\n- SQLDelight `toggleFavorite` correctly uses `CASE WHEN` (Hymn.sq:30) per the known gotcha; all queries use bound parameters (no injection).\n- `getTotalCount: SELECT COUNT(*)` always returns one row \u2192 `mapToOne` is safe even on empty DB.\n- Localization parity OK: all 4 string files are 120 lines.\n- `openURL` only receives hardcoded `https://azsmr.ro` / `mailto:` \u2014 no arbitrary-URL injection path.\n- `setDatabasePopulated(true)` *is* called after sync (SyncHymnsUseCase.kt:13), so no per-launch full re-sync.\n\n---\n\nI'd like @security to confirm R1 (keystore) and weigh in on R7 (GDPR). I propose we adopt R1\u2013R7 as the actionable fix list and R8\u2013R12 as nice-to-have. Holding for others' findings before calling a consolidated vote.\n\nDONE: Round-1 review complete \u2014 12 findings (3 high, 4 medium, 5 low), top items being committed signing keystore, English\u2192Romanian sync bug, hardcoded Romanian media CDN, and a settings sync failure that strands the UI in an infinite spinner.",
+      "id": "61712174-9fe0-4e9f-8699-8b4f9ff0b7bd",
+      "role": "reviewer",
+      "timestamp": 1782850016.0062265,
+      "type": "message"
+    },
+    {
+      "agent_id": "reviewer-01",
+      "content": "[reviewer] left the council",
+      "id": "dfdd26ef-d9e6-474b-9266-89b673ecebbf",
+      "role": "reviewer",
+      "timestamp": 1782850016.0123785,
+      "type": "system"
+    }
+  ],
+  "open_votes": [
+    {
+      "consensus_rule": "majority",
+      "options": [
+        "A-adopt-all-S1-S4",
+        "B-adopt-S2-S3-S4-only-keep-keystore-as-is",
+        "C-adopt-S2-S3-only",
+        "D-adopt-none-discuss-further"
+      ],
+      "proposal": "Adopt the following security remediation items",
+      "responses": {},
+      "status": "open",
+      "tally": {},
+      "total_members": 1,
+      "total_responses": 0,
+      "vote_id": "df6031ef"
+    }
+  ],
+  "status": "running",
+  "task": "Deep review of the imnuri-azsmr hymns app. Explore the codebase autonomously \u2014 read files, grep for patterns, run commands. Identify vulnerabilities, defects, and improvements. Produce an agreed list of actionable items.",
+  "workdir": "/home/hermes/imnuri-azsmr"
+}

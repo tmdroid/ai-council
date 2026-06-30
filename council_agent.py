@@ -114,22 +114,27 @@ def main():
     sys.stdout.flush()
 
     # Initialize tmux session if needed
-    tmux_session = None
-    if args.tmux:
-        from council_tmux import TmuxSession, build_tmux_command, get_prompt_indicator
-        backend_config = config.get("backends", {}).get(backend_name, {})
-        tmux_cmd = build_tmux_command(backend_name, model_id, backend_config)
-        prompt_ind = get_prompt_indicator(backend_name)
-        tmux_session = TmuxSession(
-            session_name=f"council-{agent_id}",
-            command=tmux_cmd,
+    tmux_agent = None
+    if args.tmux or backend_name == "ollama-claude-code":
+        from cli_agent import create_agent
+        config_dict = config
+        def _on_status(old, new):
+            print(f"  [status] {old.value} -> {new.value}", file=sys.stderr)
+            sys.stderr.flush()
+        tmux_agent = create_agent(
+            agent_id=agent_id,
+            backend_name=backend_name,
+            model_id=model_id,
+            config=config_dict,
             workdir=workdir,
-            prompt_indicator=prompt_ind,
+            on_status_change=_on_status,
         )
-        print(f"  Tmux command: {tmux_cmd}")
-        print(f"  Creating tmux session council-{agent_id}...")
-        tmux_session.create()
-        print(f"  Tmux session ready")
+        print(f"  Starting CLI agent: {tmux_agent}")
+        sys.stdout.flush()
+        if not tmux_agent.start():
+            print(f"  Failed to start CLI agent", file=sys.stderr)
+            sys.exit(1)
+        print(f"  CLI agent ready: {tmux_agent.get_status_string()}")
         sys.stdout.flush()
 
     last_seen_timestamp = 0
@@ -182,28 +187,36 @@ def main():
                 print("=== END PROMPT (dry run, not executing) ===")
                 continue
 
-            # Run the backend
-            result = backend.run(
-                prompt=prompt,
-                workdir=workdir,
-                read_only=read_only,
-                model_id=model_id,
-                timeout=args.timeout,
-            )
+            # Run the backend — use tmux interactive agent if available, else one-shot
+            if tmux_agent:
+                response = tmux_agent.send(prompt, timeout=args.timeout)
+                if not response or not response.strip():
+                    print("  Empty response, skipping")
+                    time.sleep(poll_interval)
+                    continue
+                # Parse response
+                actions = parse_response(response)
+            else:
+                result = backend.run(
+                    prompt=prompt,
+                    workdir=workdir,
+                    read_only=read_only,
+                    model_id=model_id,
+                    timeout=args.timeout,
+                )
 
-            if not result.success:
-                print(f"  Backend error: {result.error[:200]}", file=sys.stderr)
-                time.sleep(poll_interval)
-                continue
+                if not result.success:
+                    print(f"  Backend error: {result.error[:200]}", file=sys.stderr)
+                    time.sleep(poll_interval)
+                    continue
 
-            response = result.output
-            if not response or not response.strip():
-                print("  Empty response, skipping")
-                time.sleep(poll_interval)
-                continue
-
-            # Parse response
-            actions = parse_response(response)
+                response = result.output
+                if not response or not response.strip():
+                    print("  Empty response, skipping")
+                    time.sleep(poll_interval)
+                    continue
+                # Parse response
+                actions = parse_response(response)
 
             # Post message
             if actions["message"]:
@@ -239,6 +252,9 @@ def main():
     finally:
         bus.leave(agent_id)
         print(f"Left council (agent_id={agent_id})")
+        if tmux_agent:
+            tmux_agent.stop()
+            print(f"Stopped CLI agent")
 
 
 if __name__ == "__main__":

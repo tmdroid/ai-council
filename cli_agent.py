@@ -151,7 +151,7 @@ class CLIAgent(ABC):
             # Set working directory
             if self.workdir and os.path.isdir(self.workdir):
                 subprocess.run(
-                    ["tmux", "send-keys", "-t", self.tmux_session,
+                    ["tmux", "send-keys", "-t", self.tmux_session, "--",
                      f"cd {self.workdir}", "Enter"],
                     capture_output=True, check=True, timeout=5
                 )
@@ -160,7 +160,7 @@ class CLIAgent(ABC):
             # Start the CLI (build command from subclass)
             command = self._build_command()
             subprocess.run(
-                ["tmux", "send-keys", "-t", self.tmux_session,
+                ["tmux", "send-keys", "-t", self.tmux_session, "--",
                  command, "Enter"],
                 capture_output=True, check=True, timeout=5
             )
@@ -244,12 +244,12 @@ class CLIAgent(ABC):
 
         # Type the prompt into the tmux session
         # For multi-line prompts, send each line followed by Enter
-        # But for the last line, send Enter to submit
+        # Use "--" to separate tmux flags from text that starts with "-"
         lines = prompt.split("\n")
         for i, line in enumerate(lines):
-            # Send the line text
+            # Send the line text (use -- to prevent tmux interpreting text as flags)
             subprocess.run(
-                ["tmux", "send-keys", "-t", self.tmux_session, line],
+                ["tmux", "send-keys", "-t", self.tmux_session, "--", line],
                 capture_output=True, check=True, timeout=5
             )
             # Send Enter after each line
@@ -297,7 +297,7 @@ class CLIAgent(ABC):
 
         # Send the shell command
         subprocess.run(
-            ["tmux", "send-keys", "-t", self.tmux_session, command, "Enter"],
+            ["tmux", "send-keys", "-t", self.tmux_session, "--", command, "Enter"],
             capture_output=True, check=True, timeout=5
         )
 

@@ -227,6 +227,9 @@ class SessionRoom:
                     if Path(venv_site).exists():
                         agent_env["PYTHONPATH"] = venv_site + ":" + agent_env.get("PYTHONPATH", "")
                         agent_env["VIRTUAL_ENV"] = str(Path(__file__).parent / ".venv")
+                    # Ensure ~/.local/bin (claude, ollama) is in PATH
+                    local_bin = os.path.expanduser("~/.local/bin")
+                    agent_env["PATH"] = local_bin + ":" + agent_env.get("PATH", "")
 
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=agent_env)
                     self.agent_procs.append(proc)
