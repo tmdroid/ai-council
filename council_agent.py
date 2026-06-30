@@ -46,8 +46,10 @@ def main():
     parser.add_argument("--context", default="", help="Extra context to inject into every prompt")
     parser.add_argument("--poll-interval", type=float, default=None, help="Seconds between bus polls")
     parser.add_argument("--timeout", type=int, default=600, help="Timeout per CLI invocation (seconds)")
+    parser.add_argument("--tmux", action="store_true",
+                        help="Run agent in a persistent tmux session (interactive mode)")
     parser.add_argument("--dry-run", action="store_true",
-                       help="Don't actually run the CLI — just print the prompt and exit")
+                        help="Don't actually run the CLI — just print the prompt and exit")
     args = parser.parse_args()
 
     # Load config
@@ -108,7 +110,27 @@ def main():
     print(f"Joined council as [{args.role}] agent_id={agent_id}")
     print(f"  Backend: {backend_name} | Model: {model_label} | Read-only: {read_only}")
     print(f"  Workdir: {workdir} | Max rounds: {max_rounds} | Max turns: {max_turns}")
+    print(f"  Mode: {'tmux (interactive)' if args.tmux else 'one-shot (subprocess)'}")
     sys.stdout.flush()
+
+    # Initialize tmux session if needed
+    tmux_session = None
+    if args.tmux:
+        from council_tmux import TmuxSession, build_tmux_command, get_prompt_indicator
+        backend_config = config.get("backends", {}).get(backend_name, {})
+        tmux_cmd = build_tmux_command(backend_name, model_id, backend_config)
+        prompt_ind = get_prompt_indicator(backend_name)
+        tmux_session = TmuxSession(
+            session_name=f"council-{agent_id}",
+            command=tmux_cmd,
+            workdir=workdir,
+            prompt_indicator=prompt_ind,
+        )
+        print(f"  Tmux command: {tmux_cmd}")
+        print(f"  Creating tmux session council-{agent_id}...")
+        tmux_session.create()
+        print(f"  Tmux session ready")
+        sys.stdout.flush()
 
     last_seen_timestamp = 0
     round_num = 0
