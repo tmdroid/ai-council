@@ -41,7 +41,7 @@ DATA_DIR.mkdir(exist_ok=True)
 # =============================================================================
 
 class SessionRoom:
-    """A session room: members, messages, votes, persistence."""
+    """A session room: members, messages, votes, persistence, phases."""
 
     def __init__(self, session_id, task, workdir, config_path, consensus="majority"):
         self.id = session_id
@@ -61,6 +61,12 @@ class SessionRoom:
         self.lock = threading.RLock()
         self.consensus_rule = consensus
 
+        # Phase state
+        self.phase = "init"          # current phase name
+        self.phases = []             # list of proposed phases [{name, goal, agents}]
+        self.phase_index = 0         # which phase we're in (0-based)
+        self.phase_summaries = []    # summaries posted at end of each phase
+
     def join(self, agent_id, role, model=""):
         with self.lock:
             if agent_id in self.members:
@@ -69,6 +75,60 @@ class SessionRoom:
                 return
             self.members[agent_id] = {"role": role, "model": model, "joined_at": time.time()}
             self._add_system(f"[{role}] joined the council", agent_id, role)
+
+    # --- Phase management ---
+
+    def set_phases(self, phases):
+        """Set the proposed phase list. Called by the orchestrator."""
+        with self.lock:
+            self.phases = phases
+            self.phase_index = 0
+            if phases:
+                self.phase = phases[0]["name"]
+            self.save_meta()
+            self._broadcast_event("state", self.get_state())
+
+    def transition_phase(self, summary=""):
+        """Transition to the next phase. Posts a summary, stops current agents."""
+        with self.lock:
+            if self.phase_index >= len(self.phases) - 1:
+                # Last phase — mark complete
+                self.phase = "complete"
+                self.status = "complete"
+                self.phase_summaries.append({"phase": self.phases[self.phase_index]["name"], "summary": summary})
+                self.post_message(self.human_id,
+                    f"PHASE COMPLETE: {self.phases[self.phase_index]['name']}\n{summary}\n\nAll phases done. Task complete.",
+                    "system")
+                self.save_meta()
+                self._broadcast_event("state", self.get_state())
+                return {"status": "complete"}
+
+            # Post summary for current phase
+            current_name = self.phases[self.phase_index]["name"]
+            self.phase_summaries.append({"phase": current_name, "summary": summary})
+            self.post_message(self.human_id,
+                f"PHASE COMPLETE: {current_name}\nSummary: {summary}\n\nNext phase: {self.phases[self.phase_index + 1]['name']}",
+                "system")
+
+            # Advance
+            self.phase_index += 1
+            self.phase = self.phases[self.phase_index]["name"]
+            self.save_meta()
+            self._broadcast_event("state", self.get_state())
+            return {"status": "transitioned", "phase": self.phase, "index": self.phase_index}
+
+    def get_phase_info(self):
+        """Return current phase info."""
+        with self.lock:
+            if not self.phases:
+                return {"phase": self.phase, "phases": [], "index": 0}
+            return {
+                "phase": self.phase,
+                "phases": self.phases,
+                "index": self.phase_index,
+                "current_goal": self.phases[self.phase_index].get("goal", ""),
+                "summaries": self.phase_summaries,
+            }
 
     def leave(self, agent_id):
         with self.lock:
@@ -178,6 +238,9 @@ class SessionRoom:
                 "created_at": self.created_at, "members": dict(self.members),
                 "messages": list(self.messages), "open_votes": self.get_open_votes(),
                 "agents": self.agents, "message_count": len(self.messages),
+                "phase": self.phase, "phases": self.phases,
+                "phase_index": self.phase_index,
+                "phase_summaries": self.phase_summaries,
             }
 
     def start_agents(self, agents=None):
@@ -422,6 +485,37 @@ def api_leave(sid):
     body = request.get_json()
     room.leave(body.get("agent_id", ""))
     return jsonify({"status": "left"})
+
+
+@app.route("/api/sessions/<sid>/phases", methods=["POST"])
+def api_set_phases(sid):
+    """Set the proposed phase list for a session."""
+    room = MANAGER.get(sid)
+    if not room: return jsonify({"error": "not_found"}), 404
+    body = request.get_json()
+    room.set_phases(body.get("phases", []))
+    return jsonify({"status": "ok", "phase": room.phase, "phases": room.phases})
+
+
+@app.route("/api/sessions/<sid>/phase/transition", methods=["POST"])
+def api_transition_phase(sid):
+    """Transition to the next phase."""
+    room = MANAGER.get(sid)
+    if not room: return jsonify({"error": "not_found"}), 404
+    body = request.get_json()
+    summary = body.get("summary", "")
+    # Stop current agents before transitioning
+    room.stop_agents()
+    result = room.transition_phase(summary)
+    return jsonify(result)
+
+
+@app.route("/api/sessions/<sid>/phase", methods=["GET"])
+def api_get_phase(sid):
+    """Get current phase info."""
+    room = MANAGER.get(sid)
+    if not room: return jsonify({"error": "not_found"}), 404
+    return jsonify(room.get_phase_info())
 
 
 @app.route("/api/sessions/<sid>/message", methods=["POST"])
