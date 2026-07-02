@@ -357,6 +357,10 @@ PHASE_CONTINUE: <your reason for waiting>"""
                 ro = "RO" if a.get("read_only") else "RW"
                 print(f"     {a['id']} [{a['role']}] {a['backend']}/{a.get('model','')} {ro}")
 
+        # Auto-approve and start running immediately
+        print("[orchestrator] Auto-approving phase plan, starting workflow...")
+        self._post_message("Phase plan approved. Starting workflow.", "system")
+
     def run(self):
         """Run the full workflow: start phase 1, monitor, transition, repeat."""
         self.running = True
