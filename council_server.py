@@ -118,6 +118,12 @@ class SessionRoom:
             self.members = {k: v for k, v in self.members.items()
                            if k in (self.human_id, "orchestrator")}
 
+            # Re-check open votes — agents that left can't vote, so close
+            # votes that now have enough responses from remaining members
+            for vid in list(self.vote_order):
+                if self.votes[vid]["status"] == "open":
+                    self._check_vote_completion(vid)
+
             # Advance
             self.phase_index += 1
             self.phase = self.phases[self.phase_index]["name"]
@@ -203,7 +209,13 @@ class SessionRoom:
 
     def _check_vote_completion(self, vote_id):
         vote = self.votes[vote_id]
-        if len(vote["responses"]) >= len(self.members):
+        # Count only current members for quorum
+        current_members = len(self.members)
+        if current_members == 0:
+            vote["status"] = "closed_no_quorum"
+            return
+        # Vote completes when all current members have responded
+        if len(vote["responses"]) >= current_members:
             vote["status"] = self._tally_result(vote_id)
             self._add_system(
                 f"VOTE {vote_id} CLOSED: {vote['status']}\nTally: {json.dumps(self._tally_vote(vote_id))}",
