@@ -39,14 +39,13 @@ def main():
     parser.add_argument("--model", default=None, help="Model ID for the backend (overrides config default)")
     parser.add_argument("--agent-id", default=None, help="Unique agent ID (auto-generated if not set)")
     parser.add_argument("--workdir", default=None, help="Working directory (overrides config)")
-    parser.add_argument("--max-rounds", type=int, default=None, help="Max conversation rounds")
+    parser.add_argument("--max-rounds", type=int, default=3, help="Max polling rounds before agent exits")
     parser.add_argument("--max-turns", type=int, default=None, help="Max turns for the CLI agent")
     parser.add_argument("--read-only", action="store_true", default=None,
                        help="Force read-only mode (overrides role config)")
     parser.add_argument("--context", default="", help="Extra context to inject into every prompt")
     parser.add_argument("--poll-interval", type=float, default=None, help="Seconds between bus polls")
     parser.add_argument("--timeout", type=int, default=600, help="Timeout per CLI invocation (seconds)")
-    parser.add_argument("--max-rounds", type=int, default=3, help="Max polling rounds before agent exits")
     parser.add_argument("--tmux", action="store_true",
                         help="Run agent in a persistent tmux session (interactive mode)")
     parser.add_argument("--dry-run", action="store_true",
