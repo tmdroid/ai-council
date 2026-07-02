@@ -190,61 +190,61 @@ def main():
 
             # Run the backend — use tmux interactive agent if available, else one-shot
             if tmux_agent:
-                # Set up progress callback to post tool calls to the council
-                progress_msgs = []
-                def on_progress(event_type, event_data):
-                    if event_type == "tool_use":
-                        tool = event_data.get("tool", "?")
-                        inp = event_data.get("input", {})
-                        # Create a short progress message
-                        if tool == "Read":
-                            path = inp.get("file_path", "?")
-                            short = path.split("/")[-1] if "/" in path else path
-                            msg = f"Reading {short}..."
-                        elif tool == "Bash":
-                            cmd_str = inp.get("command", "?")
-                            msg = f"Running: {cmd_str[:80]}..."
-                        elif tool == "Grep":
-                            pattern = inp.get("pattern", "?")
-                            msg = f"Searching for '{pattern}'..."
-                        elif tool == "Glob":
-                            pattern = inp.get("pattern", "?")
-                            msg = f"Finding files matching '{pattern}'..."
-                        elif tool == "Edit":
-                            path = inp.get("file_path", "?")
-                            short = path.split("/")[-1] if "/" in path else path
-                            msg = f"Editing {short}..."
-                        elif tool == "Write":
-                            path = inp.get("file_path", "?")
-                            short = path.split("/")[-1] if "/" in path else path
-                            msg = f"Writing {short}..."
-                        elif tool == "WebSearch":
-                            query = inp.get("query", "?")
-                            msg = f"Searching web: {query[:60]}..."
-                        elif tool == "WebFetch":
-                            url = inp.get("url", "?")
-                            msg = f"Fetching {url[:60]}..."
-                        else:
-                            msg = f"Using {tool}..."
-                        progress_msgs.append(msg)
-                        print(f"  [progress] {msg}", file=sys.stderr)
-                        sys.stderr.flush()
-
-                response = tmux_agent.send(prompt, timeout=args.timeout, on_progress=on_progress)
+                # For tmux agents, post periodic progress from the tmux pane
+                import threading
+                
+                progress_stop = threading.Event()
+                
+                def progress_monitor():
+                    """Capture tmux pane periodically and post changes as progress."""
+                    last_pane = ""
+                    while not progress_stop.is_set():
+                        time.sleep(10)
+                        if progress_stop.is_set():
+                            break
+                        try:
+                            import subprocess as sp
+                            result = sp.run(
+                                ["tmux", "capture-pane", "-t", tmux_agent.tmux_session, "-p", "-S", "-5"],
+                                capture_output=True, text=True, timeout=5
+                            )
+                            pane = result.stdout.strip()
+                            if not pane or pane == last_pane:
+                                continue
+                            last_pane = pane
+                            lines = [l.strip() for l in pane.split("\n") if l.strip()]
+                            activity = ""
+                            for line in lines[-5:]:
+                                if "●" in line:
+                                    activity = line.replace("●", "").strip()[:120]
+                                    break
+                                elif "Read" in line and "file" in line:
+                                    activity = line[:120]
+                                    break
+                                elif "Bash" in line or "$" in line:
+                                    activity = f"Running: {line[:80]}"
+                                    break
+                                elif "Edit" in line or "Write" in line:
+                                    activity = f"Editing: {line[:80]}"
+                                    break
+                            if activity:
+                                try:
+                                    bus.post_message(agent_id, f"[progress] {activity}", "progress")
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                
+                monitor_thread = threading.Thread(target=progress_monitor, daemon=True)
+                monitor_thread.start()
+                
+                response = tmux_agent.send(prompt, timeout=args.timeout)
+                progress_stop.set()
+                
                 if not response or not response.strip():
                     print("  Empty response, skipping")
                     time.sleep(poll_interval)
                     continue
-
-                # Post progress updates to the council if any tool calls were made
-                if progress_msgs:
-                    progress_text = " | ".join(progress_msgs[:10])
-                    if len(progress_msgs) > 10:
-                        progress_text += f" | ...and {len(progress_msgs) - 10} more"
-                    try:
-                        bus.post_message(agent_id, f"[progress] {progress_text}", "progress")
-                    except Exception:
-                        pass
 
                 # Parse response
                 actions = parse_response(response)

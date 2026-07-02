@@ -374,11 +374,13 @@ PHASE_CONTINUE: <reason why we should wait>"""
                 print(f"  Starting {len(agents)} agents...")
                 self._start_agents(agents)
 
-            # Monitor phase
-            check_interval = 30  # check every 30 seconds
-            phase_start = time.time()
-            max_phase_time = 600  # 10 min per phase max
+            # Monitor phase — timeout is based on idle time (no new messages),
+            # not total phase duration. A coder running builds for 30 minutes
+            # is fine as long as it keeps posting progress.
+            check_interval = 15  # check every 15 seconds
+            max_idle_time = 300  # 5 min with no new messages = stuck
             last_msg_count = len(state.get("messages", []))
+            last_progress_time = time.time()
 
             while True:
                 time.sleep(check_interval)
@@ -388,35 +390,40 @@ PHASE_CONTINUE: <reason why we should wait>"""
                     print(f"  [orchestrator] Phase interrupted: {state['status']}")
                     break
 
-                # Wait for at least one new agent message before checking completion
+                # Check for new messages (progress or otherwise)
                 current_msg_count = len(state.get("messages", []))
-                if current_msg_count <= last_msg_count:
-                    print(f"  [orchestrator] Waiting for agent to post ({int(time.time() - phase_start)}s, {current_msg_count}/{last_msg_count} msgs)...")
-                    if time.time() - phase_start > max_phase_time:
-                        print(f"  [orchestrator] Phase timeout ({max_phase_time}s), forcing transition")
-                        self._transition_phase("Phase timed out — no agent response received")
+                if current_msg_count > last_msg_count:
+                    # Progress! Reset idle timer
+                    new_count = current_msg_count - last_msg_count
+                    last_msg_count = current_msg_count
+                    last_progress_time = time.time()
+                    print(f"  [orchestrator] {new_count} new message(s), checking completion...")
+
+                    # Check if phase is complete
+                    is_complete, summary = self.check_phase_completion()
+                    if is_complete:
+                        print(f"  [orchestrator] Phase complete: {summary[:100]}")
+                        result = self._transition_phase(summary)
+                        print(f"  [orchestrator] Transition result: {result}")
                         break
-                    continue
 
-                print(f"  [orchestrator] New messages detected ({current_msg_count - last_msg_count} new), checking completion...")
-                last_msg_count = current_msg_count
-
-                # Check if phase is complete
-                is_complete, summary = self.check_phase_completion()
-
-                if is_complete:
-                    print(f"  [orchestrator] Phase complete: {summary[:100]}")
-                    result = self._transition_phase(summary)
-                    print(f"  [orchestrator] Transition result: {result}")
-                    break
-
-                print(f"  [orchestrator] Continue: {summary[:100]}")
-
-                # Timeout check
-                if time.time() - phase_start > max_phase_time:
-                    print(f"  [orchestrator] Phase timeout ({max_phase_time}s), forcing transition")
-                    self._transition_phase("Phase timed out — forcing transition")
-                    break
+                    print(f"  [orchestrator] Continue: {summary[:100]}")
+                else:
+                    # No new messages — check idle timeout
+                    idle = int(time.time() - last_progress_time)
+                    print(f"  [orchestrator] No progress for {idle}s (timeout at {max_idle_time}s)...")
+                    if idle >= max_idle_time:
+                        print(f"  [orchestrator] Idle timeout ({max_idle_time}s no progress), checking if phase is complete...")
+                        # One final check — maybe agent signaled DONE but we missed it
+                        is_complete, summary = self.check_phase_completion()
+                        if is_complete:
+                            print(f"  [orchestrator] Phase complete (detected on final check): {summary[:100]}")
+                            result = self._transition_phase(summary)
+                            break
+                        # Force transition — agent is truly stuck
+                        print(f"  [orchestrator] Forcing transition — agent unresponsive")
+                        self._transition_phase(f"Phase ended — no progress for {max_idle_time}s. Last state: {summary[:100]}")
+                        break
 
         self.running = False
         print("[orchestrator] Workflow complete")
