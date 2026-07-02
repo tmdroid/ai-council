@@ -167,6 +167,9 @@ class OllamaClaudeCodeAgent(CLIAgent):
         Uses tmux send-keys -l (literal) to type the entire prompt as one
         string, then waits for the ❯ ready prompt to reappear.
         Context is preserved — Claude Code stays interactive between calls.
+
+        For long prompts (conversation history), writes to a temp file
+        and tells Claude Code to read it, avoiding tmux length limits.
         """
         if not self.is_alive():
             self._set_status(AgentStatus.ERROR)
@@ -179,11 +182,27 @@ class OllamaClaudeCodeAgent(CLIAgent):
         baseline_lines = baseline.strip().split("\n")
         baseline_count = len(baseline_lines)
 
-        # Send the prompt using -l (literal, single string)
-        subprocess.run(
-            ["tmux", "send-keys", "-t", self.tmux_session, "-l", prompt],
-            capture_output=True, check=True, timeout=5
-        )
+        # For long prompts, write to a temp file and tell Claude Code to read it
+        if len(prompt) > 500:
+            import tempfile
+            prompt_file = tempfile.NamedTemporaryFile(
+                mode='w', suffix='.txt', prefix=f'council_{self.name}_',
+                dir='/tmp', delete=False
+            )
+            prompt_file.write(prompt)
+            prompt_file.close()
+            short_prompt = f"Read the file {prompt_file.name} and follow the instructions in it. That file contains your task and the full council conversation context."
+            subprocess.run(
+                ["tmux", "send-keys", "-t", self.tmux_session, "-l", short_prompt],
+                capture_output=True, check=True, timeout=5
+            )
+        else:
+            # Short prompt — send directly
+            subprocess.run(
+                ["tmux", "send-keys", "-t", self.tmux_session, "-l", prompt],
+                capture_output=True, check=True, timeout=5
+            )
+
         subprocess.run(
             ["tmux", "send-keys", "-t", self.tmux_session, "Enter"],
             capture_output=True, check=True, timeout=5
