@@ -113,6 +113,9 @@ class SessionRoom:
             # Advance
             self.phase_index += 1
             self.phase = self.phases[self.phase_index]["name"]
+            # Reset status to "created" so the next phase can start agents
+            self.status = "created"
+            self.agents = []
             self.save_meta()
             self._broadcast_event("state", self.get_state())
             return {"status": "transitioned", "phase": self.phase, "index": self.phase_index}

@@ -128,11 +128,18 @@ class Orchestrator:
 
     def _start_agents(self, agents):
         """Start agents for the current phase."""
-        return self._api("POST", "/start", {"agents": agents})
+        try:
+            return self._api("POST", "/start", {"agents": agents})
+        except Exception as e:
+            print(f"[orchestrator] Error starting agents: {e}")
+            return {}
 
     def _stop_agents(self):
         """Stop all running agents."""
-        return self._api("POST", "/stop", {})
+        try:
+            return self._api("POST", "/stop", {})
+        except Exception:
+            return {}
 
     # ===================================================================
     # Phase 1: Propose phases
@@ -247,10 +254,10 @@ Only output the JSON, nothing else."""
         phase_name = current_phase["name"]
         phase_goal = current_phase.get("goal", "")
 
-        # Get recent messages (last 10)
-        recent = messages[-10:] if len(messages) > 10 else messages
+        # Get recent messages (last 5)
+        recent = messages[-5:] if len(messages) > 5 else messages
         recent_text = "\n".join([
-            f"[{m.get('role','?')}] ({m.get('type','message')}) {m.get('content','')[:200]}"
+            f"[{m.get('role','?')}] ({m.get('type','message')}) {m.get('content','')[:1000]}"
             for m in recent
         ])
 
@@ -360,6 +367,7 @@ PHASE_CONTINUE: <reason why we should wait>"""
             check_interval = 30  # check every 30 seconds
             phase_start = time.time()
             max_phase_time = 600  # 10 min per phase max
+            last_msg_count = len(state.get("messages", []))
 
             while True:
                 time.sleep(check_interval)
@@ -369,8 +377,20 @@ PHASE_CONTINUE: <reason why we should wait>"""
                     print(f"  [orchestrator] Phase interrupted: {state['status']}")
                     break
 
+                # Wait for at least one new agent message before checking completion
+                current_msg_count = len(state.get("messages", []))
+                if current_msg_count <= last_msg_count:
+                    print(f"  [orchestrator] Waiting for agent to post ({int(time.time() - phase_start)}s, {current_msg_count}/{last_msg_count} msgs)...")
+                    if time.time() - phase_start > max_phase_time:
+                        print(f"  [orchestrator] Phase timeout ({max_phase_time}s), forcing transition")
+                        self._transition_phase("Phase timed out — no agent response received")
+                        break
+                    continue
+
+                print(f"  [orchestrator] New messages detected ({current_msg_count - last_msg_count} new), checking completion...")
+                last_msg_count = current_msg_count
+
                 # Check if phase is complete
-                print(f"  [orchestrator] Checking phase completion ({int(time.time() - phase_start)}s)...")
                 is_complete, summary = self.check_phase_completion()
 
                 if is_complete:

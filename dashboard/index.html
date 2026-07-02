@@ -150,6 +150,44 @@ body {
   gap: 8px;
 }
 
+/* Phase bar */
+.phase-bar {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.phase-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text-dim);
+  transition: all 0.2s;
+}
+.phase-chip.done {
+  background: rgba(76,175,80,0.15);
+  border-color: rgba(76,175,80,0.4);
+  color: #4caf50;
+}
+.phase-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  font-weight: 600;
+}
+.phase-num {
+  font-size: 10px;
+  opacity: 0.7;
+}
+.phase-name {
+  font-size: 12px;
+}
+
 .btn {
   padding: 6px 14px;
   border-radius: 6px;
@@ -624,6 +662,16 @@ function renderSession(data) {
           ${data.status} · ${data.consensus} · ${data.workdir}
           ${data.message_count ? ' · ' + data.message_count + ' messages' : ''}
         </div>
+        ${data.phases && data.phases.length ? `
+        <div class="phase-bar">
+          ${data.phases.map((p, i) => `
+            <div class="phase-chip ${i === data.phase_index ? 'active' : i < data.phase_index ? 'done' : ''}" title="${escapeHtml(p.goal || '')}">
+              <span class="phase-num">${i + 1}</span>
+              <span class="phase-name">${escapeHtml(p.name)}</span>
+            </div>
+          `).join('')}
+        </div>
+        ` : ''}
       </div>
       <div class="header-actions">
         ${data.status === 'running' ? '<button class="btn danger" onclick="stopAgents()">Stop Agents</button>' : ''}
