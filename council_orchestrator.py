@@ -168,9 +168,15 @@ Rules:
 - Not every task needs all phases. A simple task might need just 1-2 phases.
 - Exploration phases need 1 researcher (read_only).
 - Planning phases need 1 planner (read_only).
-- Plan review phases need 1 reviewer + the planner stays (debate).
+- IF the task involves implementation/code changes, ALWAYS include a
+  plan-review phase after planning and before execution. The planner
+  stays and a reviewer joins to adversarially challenge the plan. They
+  debate until the reviewer approves — this prevents bad plans from
+  reaching execution.
 - Execution phases need 1+ coders (not read_only).
-- Code review phases need 1 reviewer (read_only).
+- Code review phases need 1 reviewer (read_only) to check the implementation.
+- If the task is purely analytical (review, audit, explore), skip execution
+  and code review — just explore and debate.
 - Keep it minimal — don't add phases that aren't needed.
 
 Respond in JSON format:
