@@ -276,8 +276,19 @@ Phase goal: {phase_goal}
 Recent messages:
 {recent_text}
 
-Have the phase goals been met? If yes, provide a brief summary of what was accomplished.
-If no, explain what's still missing.
+Evaluate the current phase:
+
+1. Have the phase goals been met?
+2. If this is a review/debate phase (plan-review, code-review), check:
+   - Did the reviewer raise issues?
+   - Has the original author (planner/coder) addressed those issues?
+   - Are there unresolved disagreements?
+   If there are unresolved issues, the phase is NOT complete — say PHASE_CONTINUE
+   so the agents can keep debating.
+3. If this is an execution phase, check:
+   - Did the coder signal completion?
+   - Are there unresolved errors?
+   If there are errors, say PHASE_CONTINUE.
 
 Respond with exactly one of:
 PHASE_COMPLETE: <brief summary of accomplishments>

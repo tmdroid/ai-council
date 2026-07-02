@@ -25,6 +25,7 @@ act without human approval prompts.
 
 import os
 import re
+import json
 from cli_agent import CLIAgent, AgentStatus
 
 
@@ -91,11 +92,19 @@ class OllamaClaudeCodeAgent(CLIAgent):
         self._first_call = True
         return True
 
-    def send(self, prompt: str, timeout: int = 300) -> str:
+    def send(self, prompt: str, timeout: int = 300, on_progress=None) -> str:
         """Send a prompt to Claude Code and get a response.
 
         Uses -p (print) mode with --continue for context preservation.
         First call starts a new session; subsequent calls continue it.
+
+        Args:
+            prompt: The text to send to Claude Code
+            timeout: Max seconds to wait
+            on_progress: Optional callback(event_type, event_data) for streaming.
+                     If provided, uses --output-format stream-json --verbose
+                     and calls on_progress for each event (tool_use, tool_result,
+                     thinking, etc.). The final text result is still returned.
         """
         import subprocess
 
@@ -111,13 +120,58 @@ class OllamaClaudeCodeAgent(CLIAgent):
         self._first_call = False
 
         try:
-            result = subprocess.run(
-                cmd, cwd=self.workdir, capture_output=True, text=True,
-                timeout=timeout, env=env
-            )
-            self._set_status(AgentStatus.READY)
-            output = result.stdout.strip()
-            return self._clean_output(output)
+            if on_progress:
+                # Streaming mode — capture events as they happen
+                cmd += ["--output-format", "stream-json", "--verbose"]
+                result = subprocess.run(
+                    cmd, cwd=self.workdir, capture_output=True, text=True,
+                    timeout=timeout, env=env
+                )
+                # Parse stream-json lines and call on_progress for each
+                final_text = ""
+                for line in result.stdout.strip().split("\n"):
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                        event_type = event.get("type", "")
+                        if event_type == "assistant":
+                            msg = event.get("message", {})
+                            content = msg.get("content", [])
+                            for block in content:
+                                if block.get("type") == "tool_use":
+                                    tool_name = block.get("name", "?")
+                                    tool_input = block.get("input", {})
+                                    on_progress("tool_use", {
+                                        "tool": tool_name,
+                                        "input": tool_input,
+                                    })
+                                elif block.get("type") == "text":
+                                    final_text = block.get("text", "")
+                        elif event_type == "user":
+                            msg = event.get("message", {})
+                            content = msg.get("content", [])
+                            for block in content:
+                                if block.get("type") == "tool_result":
+                                    on_progress("tool_result", {
+                                        "content": str(block.get("content", ""))[:200],
+                                    })
+                        elif event_type == "result":
+                            final_text = event.get("result", final_text)
+                    except json.JSONDecodeError:
+                        pass
+
+                self._set_status(AgentStatus.READY)
+                return self._clean_output(final_text)
+            else:
+                # Non-streaming mode — just get the final output
+                result = subprocess.run(
+                    cmd, cwd=self.workdir, capture_output=True, text=True,
+                    timeout=timeout, env=env
+                )
+                self._set_status(AgentStatus.READY)
+                output = result.stdout.strip()
+                return self._clean_output(output)
         except subprocess.TimeoutExpired:
             self._set_status(AgentStatus.ERROR)
             return "<error>Timeout</error>"

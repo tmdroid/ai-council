@@ -190,11 +190,62 @@ def main():
 
             # Run the backend — use tmux interactive agent if available, else one-shot
             if tmux_agent:
-                response = tmux_agent.send(prompt, timeout=args.timeout)
+                # Set up progress callback to post tool calls to the council
+                progress_msgs = []
+                def on_progress(event_type, event_data):
+                    if event_type == "tool_use":
+                        tool = event_data.get("tool", "?")
+                        inp = event_data.get("input", {})
+                        # Create a short progress message
+                        if tool == "Read":
+                            path = inp.get("file_path", "?")
+                            short = path.split("/")[-1] if "/" in path else path
+                            msg = f"Reading {short}..."
+                        elif tool == "Bash":
+                            cmd_str = inp.get("command", "?")
+                            msg = f"Running: {cmd_str[:80]}..."
+                        elif tool == "Grep":
+                            pattern = inp.get("pattern", "?")
+                            msg = f"Searching for '{pattern}'..."
+                        elif tool == "Glob":
+                            pattern = inp.get("pattern", "?")
+                            msg = f"Finding files matching '{pattern}'..."
+                        elif tool == "Edit":
+                            path = inp.get("file_path", "?")
+                            short = path.split("/")[-1] if "/" in path else path
+                            msg = f"Editing {short}..."
+                        elif tool == "Write":
+                            path = inp.get("file_path", "?")
+                            short = path.split("/")[-1] if "/" in path else path
+                            msg = f"Writing {short}..."
+                        elif tool == "WebSearch":
+                            query = inp.get("query", "?")
+                            msg = f"Searching web: {query[:60]}..."
+                        elif tool == "WebFetch":
+                            url = inp.get("url", "?")
+                            msg = f"Fetching {url[:60]}..."
+                        else:
+                            msg = f"Using {tool}..."
+                        progress_msgs.append(msg)
+                        print(f"  [progress] {msg}", file=sys.stderr)
+                        sys.stderr.flush()
+
+                response = tmux_agent.send(prompt, timeout=args.timeout, on_progress=on_progress)
                 if not response or not response.strip():
                     print("  Empty response, skipping")
                     time.sleep(poll_interval)
                     continue
+
+                # Post progress updates to the council if any tool calls were made
+                if progress_msgs:
+                    progress_text = " | ".join(progress_msgs[:10])
+                    if len(progress_msgs) > 10:
+                        progress_text += f" | ...and {len(progress_msgs) - 10} more"
+                    try:
+                        bus.post_message(agent_id, f"[progress] {progress_text}", "progress")
+                    except Exception:
+                        pass
+
                 # Parse response
                 actions = parse_response(response)
             else:
