@@ -283,27 +283,44 @@ Evaluate the current phase:
    - Did the reviewer raise issues?
    - Has the original author (planner/coder) addressed those issues?
    - Are there unresolved disagreements?
-   If there are unresolved issues, the phase is NOT complete — say PHASE_CONTINUE
-   so the agents can keep debating.
+   If there are unresolved issues, the phase is NOT complete — keep debating.
 3. If this is an execution phase, check:
    - Did the coder signal completion?
    - Are there unresolved errors?
-   If there are errors, say PHASE_CONTINUE.
+   If there are errors, keep going.
+
+IMPORTANT: Do NOT echo the template instructions back. Start your response
+directly with PHASE_COMPLETE or PHASE_CONTINUE followed by your assessment.
 
 Respond with exactly one of:
-PHASE_COMPLETE: <brief summary of accomplishments>
-PHASE_CONTINUE: <reason why we should wait>"""
+PHASE_COMPLETE: <your summary of what was accomplished>
+PHASE_CONTINUE: <your reason for waiting>"""
 
         response = self.agent.send(prompt, timeout=120)
 
+        # Parse — check the LAST occurrence, not the first (Claude Code echoes
+        # the template in its response before giving its actual answer)
         if "PHASE_COMPLETE:" in response:
-            summary = response.split("PHASE_COMPLETE:")[1].strip()
+            # Find the last PHASE_COMPLETE in the response
+            idx = response.rfind("PHASE_COMPLETE:")
+            summary = response[idx + len("PHASE_COMPLETE:"):].strip()
+            # Validate — reject template placeholders
+            if summary.startswith("<") or "brief summary" in summary[:30]:
+                # This is the template, not a real answer — check if there's a
+                # real PHASE_COMPLETE after it
+                real_idx = response.rfind("PHASE_COMPLETE:")
+                after = response[real_idx + len("PHASE_COMPLETE:"):].strip()
+                if after.startswith("<") or not after or "brief summary" in after[:30]:
+                    return False, "Orchestrator echoed template without deciding"
+                summary = after
             return True, summary
         elif "PHASE_CONTINUE:" in response:
-            reason = response.split("PHASE_CONTINUE:")[1].strip()
+            idx = response.rfind("PHASE_CONTINUE:")
+            reason = response[idx + len("PHASE_CONTINUE:"):].strip()
+            if reason.startswith("<") or "reason why" in reason[:30]:
+                return False, "Orchestrator echoed template without deciding"
             return False, reason
         else:
-            # Can't parse — default to continue
             return False, f"Orchestrator unsure, continuing. Response: {response[:100]}"
 
     # ===================================================================

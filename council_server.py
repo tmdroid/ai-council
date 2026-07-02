@@ -110,10 +110,18 @@ class SessionRoom:
                 f"PHASE COMPLETE: {current_name}\nSummary: {summary}\n\nNext phase: {self.phases[self.phase_index + 1]['name']}",
                 "system")
 
+            # Remove old phase agents from members (keep human and orchestrator)
+            old_agents = {k: v for k, v in self.members.items()
+                         if k not in (self.human_id, "orchestrator")}
+            for agent_id, info in old_agents.items():
+                self._add_system(f"[{info.get('role','?')}] left the council (phase transition)", agent_id, info.get('role','?'))
+            self.members = {k: v for k, v in self.members.items()
+                           if k in (self.human_id, "orchestrator")}
+
             # Advance
             self.phase_index += 1
             self.phase = self.phases[self.phase_index]["name"]
-            # Reset status to "created" so the next phase can start agents
+            # Reset status so the next phase can start agents
             self.status = "created"
             self.agents = []
             self.save_meta()
